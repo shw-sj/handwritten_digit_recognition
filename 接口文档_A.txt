@@ -1,0 +1,215 @@
+================================================================================
+  成员A 接口文档 —— 供成员B（BP网络）和成员C（GUI/集成）调用
+================================================================================
+
+【模块列表】
+
+  1. image_loader.py    — 图像加载 + 预处理 + 数据集划分
+  2. image_feature.py   — 图像特征提取（3种方法）
+  3. data_augmentation.py — 图像数据增强
+  4. prepare_data.py    — 一次性数据准备脚本（下载 MNIST + EMNIST）
+
+================================================================================
+  ★ 前置步骤：首次使用前必须运行（否则 data/ 目录为空）
+================================================================================
+
+  data/ 目录已加入 .gitignore，不上传 Git。每个成员 clone 后需自行运行：
+
+      python prepare_data.py
+
+  该脚本会：
+    ① 下载 MNIST 手写数字数据集（训练 60000 + 测试 10000 张）
+    ② 下载 EMNIST-letters 手写字母数据集（训练 124800 + 测试 20800 张）
+    ③ 自动执行灰度化 → 高斯去噪 → OTSU二值化 → 28×28 归一化
+    ④ 保存为 data/mnist/mnist_processed.npz 和
+              data/emnist_letters/emnist_letters_processed.npz
+
+  已下载过的文件会自动跳过（断点续传）。总下载量约 560MB，请确保网络通畅。
+
+
+================================================================================
+  一、image_loader.py — 数据获取接口
+================================================================================
+
+>>> from image_loader import get_dataset, preprocess_single, load_mnist
+
+1.1 get_dataset(config) —— 统一数据获取（★最常用★）
+
+    config = {
+        'digits_dir':   'data/digits/',         # 手写数字目录（可选）
+        'letters_dir':  'data/letters/',        # 手写字母目录（可选）
+        'mnist_dir':    'data/mnist/',           # MNIST目录（可选）
+        'target_size':  28,                      # 预处理尺寸，默认28
+        'train_ratio':  0.6,                     # 默认值
+        'val_ratio':    0.2,                     # 默认值
+        'test_ratio':   0.2,                     # 默认值
+        'random_seed':  42,
+        'verbose':      True,
+    }
+
+    datasets = get_dataset(config)
+    # 返回格式:
+    # {
+    #     'digits': {
+    #         'X_train': (N_tr, 28, 28) uint8,   'y_train': (N_tr,) int32,
+    #         'X_val':   (N_va, 28, 28) uint8,   'y_val':   (N_va,) int32,
+    #         'X_test':  (N_te, 28, 28) uint8,   'y_test':  (N_te,) int32,
+    #         'classes': ['0','1',...,'9']
+    #     },
+    #     'letters': { ... 同上 ... }
+    # }
+
+    图像已经过完整预处理流水线：灰度化 → 高斯去噪 → OTSU二值化 → 28×28归一化
+
+1.2 preprocess_single(img, target_size=28) —— 单张图像预处理（GUI画板实时识别用）
+
+    输入: PIL.Image 或 numpy (H,W)/(H,W,3)
+    返回: (preprocessed, binary) 均为 (28,28) uint8
+
+1.3 load_prepared_data(dataset_name) —— ★推荐：加载已预处理数据集★
+
+    直接加载 prepare_data.py 下载并预处理好的 .npz 文件，自动划分训练/验证/测试集。
+
+    digits  = load_prepared_data('mnist')    # 60000训练 + 10000测试 (自动划分验证集)
+    letters = load_prepared_data('letters')  # 124800训练 + 20800测试 (自动划分验证集)
+
+    返回格式与 get_dataset() 一致:
+        {
+            'X_train', 'y_train', 'X_val', 'y_val', 'X_test', 'y_test', 'classes'
+        }
+
+1.4 load_mnist(data_dir) —— 加载MNIST IDX格式原始数据
+
+    返回: (X_train, y_train), (X_test, y_test)
+
+
+================================================================================
+  二、image_feature.py — 特征提取接口
+================================================================================
+
+>>> from image_feature import extract_features, get_feature_dim, get_all_methods
+
+2.1 extract_features(images, method='pixel', **kwargs) —— ★核心接口★
+
+    参数:
+        images: (N, 28, 28) uint8 — 即 image_loader 返回的图像数组
+        method: 'pixel' | 'projection' | 'structure'
+
+    返回:
+        features: (N, D) float32 特征矩阵
+
+    三种方法详情:
+
+    ┌──────────────┬──────────────┬──────────────────────────────────────┐
+    │ method       │ 维度 D       │ 说明                                  │
+    ├──────────────┼──────────────┼──────────────────────────────────────┤
+    │ 'pixel'      │ 784 (28×28)  │ 像素网格展平为向量                    │
+    │              │ 或196(14×14) │ 通过 grid_size=14 切换                │
+    │ 'projection' │ 56 (28+28)   │ 水平投影直方图(28) + 垂直投影(28)     │
+    │ 'structure'  │ 17           │ Hu矩(7)+笔画穿越(8)+孔洞数(1)+宽高比(1)│
+    └──────────────┴──────────────┴──────────────────────────────────────┘
+
+    使用示例:
+
+        from image_feature import extract_features
+
+        X = datasets['digits']['X_train']  # (N, 28, 28) uint8
+
+        F_pixel = extract_features(X, method='pixel', grid_size=28)  # (N, 784)
+        F_proj  = extract_features(X, method='projection')           # (N, 56)
+        F_struc = extract_features(X, method='structure')            # (N, 17)
+
+2.2 get_feature_dim(method, image_size=28, **kwargs) —— 获取输入维度
+
+    用于配置BP网络输入层大小:
+
+        input_dim = get_feature_dim('pixel', grid_size=28)       # → 784
+        input_dim = get_feature_dim('projection', image_size=28)  # → 56
+        input_dim = get_feature_dim('structure')                  # → 17
+
+2.3 get_all_methods() → ['pixel', 'projection', 'structure']
+
+
+================================================================================
+  三、data_augmentation.py — 数据增强接口
+================================================================================
+
+>>> from data_augmentation import augment_dataset, augment_single
+
+3.1 augment_dataset(images, labels, factor=3, random_seed=42) —— ★批量增强★
+
+    参数:
+        images: (N, H, W) uint8
+        labels: (N,) int
+        factor: 扩充倍数（默认3，即最终数据量 = N * 3）
+
+    返回:
+        aug_images: (N*factor, H, W) uint8
+        aug_labels: (N*factor,) int
+
+    使用示例:
+
+        from data_augmentation import augment_dataset
+
+        X = datasets['digits']['X_train']  # (1200, 28, 28)
+        y = datasets['digits']['y_train']  # (1200,)
+
+        X_aug, y_aug = augment_dataset(X, y, factor=3)
+        # → (3600, 28, 28), (3600,)
+
+    增强策略（每张图每种变换独立随机应用）:
+      - 旋转 ±10°           (概率 0.7)
+      - 平移 ±3px           (概率 0.7)
+      - 缩放 ±10%           (概率 0.5)
+      - 弹性形变            (概率 0.4)
+
+3.2 augment_single(img, rng=None) —— 单张随机增强（GUI测试用）
+
+
+================================================================================
+  四、成员B/C 完整调用流程示例
+================================================================================
+
+# ---------- 步骤1: 获取数据 ----------
+from image_loader import get_dataset
+
+config = {
+    'digits_dir':  'data/digits/',
+    'letters_dir': 'data/letters/',
+    'target_size': 28,
+}
+datasets = get_dataset(config)
+
+# ---------- 步骤2: 数据增强（仅训练集）----------
+from data_augmentation import augment_dataset
+
+digits = datasets['digits']
+X_aug, y_aug = augment_dataset(digits['X_train'], digits['y_train'], factor=3)
+
+# ---------- 步骤3: 特征提取 ----------
+from image_feature import extract_features, get_feature_dim
+
+# 用增强后的训练数据提取特征
+F_train = extract_features(X_aug, method='pixel', grid_size=28)  # (N*3, 784)
+F_val   = extract_features(digits['X_val'], method='pixel')
+F_test  = extract_features(digits['X_test'], method='pixel')
+
+# 获取输入维度 → 传给BP网络
+input_dim = get_feature_dim('pixel', grid_size=28)  # 784
+output_dim = len(digits['classes'])                  # 10 (数字) 或 26 (字母)
+
+# ---------- 步骤4: 传给成员B的BP网络 ----------
+# model = BPNetwork(input_dim=input_dim, hidden_dims=[128, 64], output_dim=output_dim)
+# model.train(F_train, y_aug, F_val, digits['y_val'])
+# metrics = model.evaluate(F_test, digits['y_test'])
+
+
+================================================================================
+  五、依赖
+================================================================================
+
+  Python 依赖:
+    pip install numpy pillow scipy scikit-learn
+
+  系统依赖:
+    curl（Windows 10+ 自带，用于下载数据集）

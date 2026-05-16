@@ -1,0 +1,14 @@
+.idea/
+*.iml
+.vscode/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 数据集（由 prepare_data.py 下载，不入 git）
+data/
+!data/digits/.gitkeep
+!data/letters/.gitkeep
+!data/voice/.gitkeep
