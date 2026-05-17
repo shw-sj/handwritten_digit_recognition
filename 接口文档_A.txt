@@ -1,86 +1,136 @@
 ================================================================================
   成员A 接口文档 —— 供成员B（BP网络）和成员C（GUI/集成）调用
 ================================================================================
-
+(详细见调用示例_A.ipynb)
+环境见：environment.yml
 【模块列表】
 
   1. image_loader.py    — 图像加载 + 预处理 + 数据集划分
   2. image_feature.py   — 图像特征提取（3种方法）
   3. data_augmentation.py — 图像数据增强
-  4. prepare_data.py    — 一次性数据准备脚本（下载 MNIST + EMNIST）
+  4. prepare_data.py    — （备选）手动下载预处理脚本，一般不再需要
 
 ================================================================================
-  ★ 前置步骤：首次使用前必须运行（否则 data/ 目录为空）
+  ★ 数据获取方式（二选一，推荐方式一）
 ================================================================================
 
-  data/ 目录已加入 .gitignore，不上传 Git。每个成员 clone 后需自行运行：
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ 方式一（★推荐）：torchvision 在线加载                                │
+  │                                                                     │
+  │   直接调用 load_torchvision_data()，由 torchvision 自动管理下载      │
+  │   和缓存。首次运行自动下载到 ./data/，后续直接使用缓存。              │
+  │                                                                     │
+  │   无需手动运行任何脚本，无需处理 IDX 格式。                           │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
 
-      python prepare_data.py
-
-  该脚本会：
-    ① 下载 MNIST 手写数字数据集（训练 60000 + 测试 10000 张）
-    ② 下载 EMNIST-letters 手写字母数据集（训练 124800 + 测试 20800 张）
-    ③ 自动执行灰度化 → 高斯去噪 → OTSU二值化 → 28×28 归一化
-    ④ 保存为 data/mnist/mnist_processed.npz 和
-              data/emnist_letters/emnist_letters_processed.npz
-
-  已下载过的文件会自动跳过（断点续传）。总下载量约 560MB，请确保网络通畅。
-
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ 方式二（备选）：手动下载预处理                                        │
+  │                                                                     │
+  │   运行 python prepare_data.py，手动下载 MNIST IDX 文件 +             │
+  │   EMNIST gzip.zip（约560MB），预处理后保存为 .npz。                   │
+  │                                                                     │
+  │   仅当网络受限或需要离线使用时才用此方式。                            │
+  │                                                                     │
+  │   data/ 目录已加入 .gitignore，不上传 Git。                           │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
 
 ================================================================================
   一、image_loader.py — 数据获取接口
 ================================================================================
 
->>> from image_loader import get_dataset, preprocess_single, load_mnist
+>>> from image_loader import load_torchvision_data, get_dataset, preprocess_single
 
-1.1 get_dataset(config) —— 统一数据获取（★最常用★）
 
-    config = {
-        'digits_dir':   'data/digits/',         # 手写数字目录（可选）
-        'letters_dir':  'data/letters/',        # 手写字母目录（可选）
-        'mnist_dir':    'data/mnist/',           # MNIST目录（可选）
-        'target_size':  28,                      # 预处理尺寸，默认28
-        'train_ratio':  0.6,                     # 默认值
-        'val_ratio':    0.2,                     # 默认值
-        'test_ratio':   0.2,                     # 默认值
-        'random_seed':  42,
-        'verbose':      True,
-    }
+1.1 load_torchvision_data(dataset_name, ...) —— ★推荐：torchvision 自动加载★
 
-    datasets = get_dataset(config)
-    # 返回格式:
-    # {
-    #     'digits': {
-    #         'X_train': (N_tr, 28, 28) uint8,   'y_train': (N_tr,) int32,
-    #         'X_val':   (N_va, 28, 28) uint8,   'y_val':   (N_va,) int32,
-    #         'X_test':  (N_te, 28, 28) uint8,   'y_test':  (N_te,) int32,
-    #         'classes': ['0','1',...,'9']
-    #     },
-    #     'letters': { ... 同上 ... }
-    # }
+    首次调用时 torchvision 自动下载数据集到 ./data/ 目录，后续直接使用缓存。
+    无需网络代理配置，无需手动下载。
+
+    # ---------- 正式训练：全量数据 ----------
+    digits  = load_torchvision_data('mnist')
+    letters = load_torchvision_data('letters')
+
+    # ---------- 调试 / 演示：少量数据快速验证 ----------
+    digits  = load_torchvision_data('mnist', max_train=500, max_test=200, verbose=False)
+
+    参数:
+        dataset_name: 'mnist'（数字0-9） 或 'letters'（字母A-Z）
+        split_val:    是否划分验证集，默认 True
+        train_ratio:  训练集比例，默认 0.6
+        val_ratio:    验证集比例，默认 0.2
+        random_seed:  随机种子，默认 42
+        verbose:      打印进度，默认 True
+        max_train:    最多加载训练样本数，None=全量。调试/演示时设 500~2000，正式训练不传此参数
+        max_test:     最多加载测试样本数，None=全量。调试/演示时设 200~500，正式训练不传此参数
+
+    !! 注意：正式训练时不要传 max_train/max_test，否则数据量不足会导致模型效果很差。
+
+    返回格式:
+        {
+            'X_train': (N_tr, 28, 28) uint8,   'y_train': (N_tr,) int32,
+            'X_val':   (N_va, 28, 28) uint8,   'y_val':   (N_va,) int32,
+            'X_test':  (N_te, 28, 28) uint8,   'y_test':  (N_te,) int32,
+            'classes': ['0','1',...,'9']  或  ['A','B',...,'Z']
+        }
+
+    数据量:
+        mnist:    训练60000张 + 测试10000张 → 划分后 训练36000 / 验证12000 / 测试10000
+        letters:  训练124800张 + 测试20800张 → 划分后 训练74880 / 验证24960 / 测试20800
 
     图像已经过完整预处理流水线：灰度化 → 高斯去噪 → OTSU二值化 → 28×28归一化
 
-1.2 preprocess_single(img, target_size=28) —— 单张图像预处理（GUI画板实时识别用）
+
+1.2 get_dataset(config) —— 统一数据获取（支持 torchvision + 本地文件）
+
+    方式一：torchvision 模式（★推荐）
+
+        # 正式训练
+        config = {
+            'use_torchvision': True,
+            'torchvision_datasets': ['mnist', 'letters'],  # 可只加载一个
+        }
+        datasets = get_dataset(config)
+
+        # 调试/演示（传递额外参数给底层 load_torchvision_data）
+        config = {
+            'use_torchvision': True,
+            'torchvision_datasets': ['mnist'],
+            'torchvision_kwargs': {'max_train': 500, 'max_test': 200},
+        }
+        datasets = get_dataset(config)
+        # datasets['digits']  → 数字数据集
+        # datasets['letters'] → 字母数据集
+
+    方式二：本地文件模式（加载自定义手写数据 + MNIST IDX）
+
+        config = {
+            'digits_dir':   'data/digits/',         # 手写数字目录（可选）
+            'letters_dir':  'data/letters/',        # 手写字母目录（可选）
+            'mnist_dir':    'data/mnist/',           # MNIST IDX目录（可选）
+            'target_size':  28,
+            'train_ratio':  0.6,
+            'val_ratio':    0.2,
+            'random_seed':  42,
+        }
+        datasets = get_dataset(config)
+
+    返回格式与 load_torchvision_data() 一致。
+
+
+1.3 preprocess_single(img, target_size=28) —— 单张图像预处理（GUI画板实时识别用）
 
     输入: PIL.Image 或 numpy (H,W)/(H,W,3)
     返回: (preprocessed, binary) 均为 (28,28) uint8
 
-1.3 load_prepared_data(dataset_name) —— ★推荐：加载已预处理数据集★
 
-    直接加载 prepare_data.py 下载并预处理好的 .npz 文件，自动划分训练/验证/测试集。
+1.4 load_prepared_data(dataset_name) —— 备选：加载 prepare_data.py 生成的 .npz
 
-    digits  = load_prepared_data('mnist')    # 60000训练 + 10000测试 (自动划分验证集)
-    letters = load_prepared_data('letters')  # 124800训练 + 20800测试 (自动划分验证集)
+    digits  = load_prepared_data('mnist')
+    letters = load_prepared_data('letters')
 
-    返回格式与 get_dataset() 一致:
-        {
-            'X_train', 'y_train', 'X_val', 'y_val', 'X_test', 'y_test', 'classes'
-        }
-
-1.4 load_mnist(data_dir) —— 加载MNIST IDX格式原始数据
-
-    返回: (X_train, y_train), (X_test, y_test)
+    需先运行 python prepare_data.py，否则会报 FileNotFoundError。
 
 
 ================================================================================
@@ -110,10 +160,6 @@
     └──────────────┴──────────────┴──────────────────────────────────────┘
 
     使用示例:
-
-        from image_feature import extract_features
-
-        X = datasets['digits']['X_train']  # (N, 28, 28) uint8
 
         F_pixel = extract_features(X, method='pixel', grid_size=28)  # (N, 784)
         F_proj  = extract_features(X, method='projection')           # (N, 56)
@@ -147,16 +193,6 @@
         aug_images: (N*factor, H, W) uint8
         aug_labels: (N*factor,) int
 
-    使用示例:
-
-        from data_augmentation import augment_dataset
-
-        X = datasets['digits']['X_train']  # (1200, 28, 28)
-        y = datasets['digits']['y_train']  # (1200,)
-
-        X_aug, y_aug = augment_dataset(X, y, factor=3)
-        # → (3600, 28, 28), (3600,)
-
     增强策略（每张图每种变换独立随机应用）:
       - 旋转 ±10°           (概率 0.7)
       - 平移 ±3px           (概率 0.7)
@@ -168,35 +204,30 @@
 
 ================================================================================
   四、成员B/C 完整调用流程示例
-================================================================================
 
-# ---------- 步骤1: 获取数据 ----------
-from image_loader import get_dataset
+  ★ 正式训练（全量数据）—— 成员B 在 train.py 中请使用此方式 ★
+  ================================================================
 
-config = {
-    'digits_dir':  'data/digits/',
-    'letters_dir': 'data/letters/',
-    'target_size': 28,
-}
-datasets = get_dataset(config)
+# ---------- 步骤1: 获取全量数据 ----------
+from image_loader import load_torchvision_data
+
+digits  = load_torchvision_data('mnist')       # 60k训练 + 10k测试
+letters = load_torchvision_data('letters')     # 124k训练 + 20k测试
 
 # ---------- 步骤2: 数据增强（仅训练集）----------
 from data_augmentation import augment_dataset
 
-digits = datasets['digits']
 X_aug, y_aug = augment_dataset(digits['X_train'], digits['y_train'], factor=3)
 
 # ---------- 步骤3: 特征提取 ----------
 from image_feature import extract_features, get_feature_dim
 
-# 用增强后的训练数据提取特征
 F_train = extract_features(X_aug, method='pixel', grid_size=28)  # (N*3, 784)
 F_val   = extract_features(digits['X_val'], method='pixel')
 F_test  = extract_features(digits['X_test'], method='pixel')
 
-# 获取输入维度 → 传给BP网络
 input_dim = get_feature_dim('pixel', grid_size=28)  # 784
-output_dim = len(digits['classes'])                  # 10 (数字) 或 26 (字母)
+output_dim = len(digits['classes'])                  # 10 或 26
 
 # ---------- 步骤4: 传给成员B的BP网络 ----------
 # model = BPNetwork(input_dim=input_dim, hidden_dims=[128, 64], output_dim=output_dim)
@@ -204,12 +235,23 @@ output_dim = len(digits['classes'])                  # 10 (数字) 或 26 (字�
 # metrics = model.evaluate(F_test, digits['y_test'])
 
 
+  ★ 调试/演示（少量数据）—— 仅用于快速验证流程是否跑通 ★
+  ================================================================
+
+digits = load_torchvision_data('mnist', max_train=500, max_test=200, verbose=False)
+
+X_aug, y_aug = augment_dataset(digits['X_train'], digits['y_train'], factor=2)
+
+F_train = extract_features(X_aug, method='pixel')
+F_val   = extract_features(digits['X_val'], method='pixel')
+F_test  = extract_features(digits['X_test'], method='pixel')
+
+# 后续流程同上 ...
+
+
 ================================================================================
   五、依赖
 ================================================================================
 
-  Python 依赖:
-    pip install numpy pillow scipy scikit-learn
-
-  系统依赖:
-    curl（Windows 10+ 自带，用于下载数据集）
+  Python 依赖（★标注了 torchvision 方式额外需要的）:
+文件：environment.yml

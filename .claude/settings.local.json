@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import image_loader; print\\('image_loader.py OK'\\); print\\('Public API:'\\); print\\('  get_dataset'\\); print\\('  load_torchvision_data'\\); print\\('  load_prepared_data'\\); print\\('  load_mnist'\\); print\\('  load_images'\\); print\\('  preprocess_single'\\); print\\('  split_dataset'\\)\")",
+      "Bash(python -c \"import image_feature; print\\('image_feature.py OK'\\); print\\('Methods:', image_feature.get_all_methods\\(\\)\\); print\\('Pixel dim:', image_feature.get_feature_dim\\('pixel', grid_size=28\\)\\); print\\('Projection dim:', image_feature.get_feature_dim\\('projection', image_size=28\\)\\); print\\('Structure dim:', image_feature.get_feature_dim\\('structure'\\)\\)\")",
+      "Bash(python -c \"import data_augmentation; print\\('data_augmentation.py OK'\\); print\\('Public API: augment_dataset, augment_single'\\)\")",
+      "Bash(where python *)",
+      "Bash(python -c ' *)",
+      "Bash(python _fix_nb.py)",
+      "Bash(rm _fix_nb.py)"
+    ]
+  }
+}

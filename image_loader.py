@@ -310,26 +310,30 @@ def get_dataset(config):
 
     参数:
         config: dict, 配置字典，支持以下键:
-            'digits_dir':   手写数字目录路径 (可选)
-            'letters_dir':  手写字母目录路径 (可选)
-            'mnist_dir':    MNIST数据目录路径 (可选)
-            'target_size':  预处理目标尺寸, 默认 28
-            'train_ratio':  训练集比例, 默认 0.6
-            'val_ratio':    验证集比例, 默认 0.2
-            'test_ratio':   测试集比例, 默认 0.2
-            'random_seed':  随机种子, 默认 42
-            'verbose':      是否打印日志, 默认 True
+            'digits_dir':        手写数字目录路径 (可选)
+            'letters_dir':       手写字母目录路径 (可选)
+            'mnist_dir':         MNIST数据目录路径 (可选)
+            'use_torchvision':   是否使用 torchvision 在线加载 (默认 False)
+                                设为 True 时自动忽略 digits_dir/mnist_dir/letters_dir
+            'torchvision_datasets': 要加载的数据集列表, 如 ['mnist', 'letters']
+                                   仅在 use_torchvision=True 时生效
+            'target_size':       预处理目标尺寸, 默认 28
+            'train_ratio':       训练集比例, 默认 0.6
+            'val_ratio':         验证集比例, 默认 0.2
+            'test_ratio':        测试集比例, 默认 0.2
+            'random_seed':       随机种子, 默认 42
+            'verbose':           是否打印日志, 默认 True
 
     返回:
         datasets: dict, 包含各数据集的划分结果:
             {
-                'digits': {   # 仅当 digits_dir 或 mnist_dir 提供时存在
+                'digits': {   # 仅当提供数字数据源时存在
                     'X_train', 'y_train',
                     'X_val',   'y_val',
                     'X_test',  'y_test',
                     'classes'
                 },
-                'letters': {  # 仅当 letters_dir 提供时存在
+                'letters': {  # 仅当提供字母数据源时存在
                     'X_train', 'y_train',
                     'X_val',   'y_val',
                     'X_test',  'y_test',
@@ -344,9 +348,29 @@ def get_dataset(config):
     seed = config.get('random_seed', 42)
     verbose = config.get('verbose', True)
 
+    # ★ torchvision 模式：通过 PyTorch 内置数据集在线加载 ★
+    if config.get('use_torchvision'):
+        tv_datasets = config.get('torchvision_datasets', ['mnist'])
+        tv_kwargs = config.get('torchvision_kwargs', {})
+        datasets = {}
+        for ds_name in tv_datasets:
+            data = load_torchvision_data(
+                ds_name,
+                split_val=(val_r > 0),
+                train_ratio=train_r,
+                val_ratio=val_r,
+                random_seed=seed,
+                verbose=verbose,
+                **tv_kwargs
+            )
+            # 统一 key 名称
+            key = 'digits' if ds_name == 'mnist' else 'letters'
+            datasets[key] = data
+        return datasets
+
     datasets = {}
 
-    # --- 手写数字 ---
+    # --- 手写数字（本地文件模式）---
     if config.get('digits_dir') or config.get('mnist_dir'):
         if verbose:
             print("[image_loader] 加载手写数字数据...")
@@ -388,7 +412,7 @@ def get_dataset(config):
         if verbose:
             print(f"  数字数据集: 训练 {len(y_tr)} / 验证 {len(y_va)} / 测试 {len(y_te)}")
 
-    # --- 手写字母 ---
+    # --- 手写字母（本地文件模式）---
     if config.get('letters_dir'):
         if verbose:
             print("[image_loader] 加载手写字母数据...")
@@ -411,6 +435,163 @@ def get_dataset(config):
             print(f"  字母数据集: 训练 {len(y_tr)} / 验证 {len(y_va)} / 测试 {len(y_te)}")
 
     return datasets
+
+
+# ============================================================
+# torchvision 在线数据集加载（★ 推荐方式 ★）
+# ============================================================
+
+
+def _dataset_to_arrays(dataset, max_samples=None, verbose=True, desc="加载"):
+    """将 torchvision Dataset 转为 numpy 数组 (N, H, W) uint8 + (N,) int32。"""
+    images, labels = [], []
+    total = len(dataset) if max_samples is None else min(len(dataset), max_samples)
+    for i, (img, label) in enumerate(dataset):
+        if max_samples is not None and i >= max_samples:
+            break
+        images.append(np.array(img, dtype=np.uint8))
+        labels.append(label)
+        if verbose and (i + 1) % 10000 == 0:
+            print(f"    {desc}: {i + 1}/{total}")
+    return np.array(images, dtype=np.uint8), np.array(labels, dtype=np.int32)
+
+
+def _batch_preprocess_images(images, target_size=28, verbose=True, desc="预处理"):
+    """批量预处理：高斯去噪 + OTSU二值化。"""
+    N = len(images)
+    processed = np.zeros((N, target_size, target_size), dtype=np.uint8)
+    for i in range(N):
+        _, processed[i] = preprocess_single(images[i], target_size=target_size)
+        if verbose and (i + 1) % 10000 == 0:
+            print(f"    {desc}: {i + 1}/{N}")
+    return processed
+
+
+def load_torchvision_data(dataset_name, split_val=True,
+                           train_ratio=0.6, val_ratio=0.2,
+                           random_seed=42, verbose=True,
+                           max_train=None, max_test=None):
+    """
+    使用 torchvision 在线加载 MNIST / EMNIST-letters 数据集（★ 推荐方式 ★）。
+
+    torchvision 自动管理下载和缓存（首次自动下载到 ./data/ 目录），
+    无需手动运行 prepare_data.py。
+
+    参数:
+        dataset_name: 'mnist' 或 'letters'
+        split_val:    是否划分验证集（从训练集中切出）
+        train_ratio:  训练集比例（默认 0.6）
+        val_ratio:    验证集比例（默认 0.2）
+        random_seed:  随机种子
+        verbose:      是否打印进度
+        max_train:    最多加载训练样本数（None=全部，调试/演示时可设 500~2000）
+        max_test:     最多加载测试样本数（None=全部）
+
+    返回:
+        dict: {
+            'X_train': (N_tr, 28, 28) uint8,  'y_train': (N_tr,) int32,
+            'X_val':   (N_va, 28, 28) uint8,  'y_val':   (N_va,) int32,
+            'X_test':  (N_te, 28, 28) uint8,  'y_test':  (N_te,) int32,
+            'classes': list[str]
+        }
+
+    示例:
+        from image_loader import load_torchvision_data
+
+        digits  = load_torchvision_data('mnist')                # 全量
+        digits  = load_torchvision_data('mnist', max_train=500) # 演示用
+    """
+    from torchvision import datasets
+
+    if dataset_name == 'mnist':
+        if verbose:
+            print("[image_loader] 通过 torchvision 加载 MNIST 手写数字数据集...")
+        train_data = datasets.MNIST(
+            root='./data', train=True, download=True
+        )
+        test_data = datasets.MNIST(
+            root='./data', train=False, download=True
+        )
+        classes = [str(i) for i in range(10)]
+
+    elif dataset_name == 'letters':
+        if verbose:
+            print("[image_loader] 通过 torchvision 加载 EMNIST-letters 手写字母数据集...")
+        train_data = datasets.EMNIST(
+            root='./data', split='letters', train=True, download=True
+        )
+        test_data = datasets.EMNIST(
+            root='./data', split='letters', train=False, download=True
+        )
+        classes = [chr(ord('A') + i) for i in range(26)]
+
+    else:
+        raise ValueError(
+            f"不支持的数据集: '{dataset_name}'，可选 'mnist' 或 'letters'"
+        )
+
+    # 1. 转为 numpy 数组
+    n_train = max_train if max_train is not None else len(train_data)
+    n_test = max_test if max_test is not None else len(test_data)
+    if verbose:
+        print(f"  加载训练集 ({n_train} / {len(train_data)} 张)...")
+    X_train_all, y_train_all = _dataset_to_arrays(
+        train_data, max_samples=max_train, verbose=verbose, desc="训练集"
+    )
+
+    if verbose:
+        print(f"  加载测试集 ({n_test} / {len(test_data)} 张)...")
+    X_test, y_test = _dataset_to_arrays(
+        test_data, max_samples=max_test, verbose=verbose, desc="测试集"
+    )
+
+    # 2. EMNIST 图像需要转置（纠正原始存储的旋转+镜像方向）
+    if dataset_name == 'letters':
+        if verbose:
+            print("  校正 EMNIST 图像方向...")
+        X_train_all = np.transpose(X_train_all, (0, 2, 1))
+        X_test = np.transpose(X_test, (0, 2, 1))
+
+    # 3. 预处理流水线：灰度化 → 高斯去噪 → OTSU二值化 → 28×28归一化
+    if verbose:
+        print(f"  预处理训练集 ({len(X_train_all)} 张)...")
+    X_train_all = _batch_preprocess_images(
+        X_train_all, target_size=28, verbose=verbose, desc="训练集"
+    )
+
+    if verbose:
+        print(f"  预处理测试集 ({len(X_test)} 张)...")
+    X_test = _batch_preprocess_images(
+        X_test, target_size=28, verbose=verbose, desc="测试集"
+    )
+
+    # 4. 划分训练/验证/测试集
+    if split_val:
+        # 归一化比例（test_ratio=0 时需要调整 train/val 和为 1）
+        _sum = train_ratio + val_ratio
+        _train_r = train_ratio / _sum
+        _val_r = val_ratio / _sum
+        (X_train, y_train), (X_val, y_val), _ = split_dataset(
+            X_train_all, y_train_all,
+            train_ratio=_train_r, val_ratio=_val_r,
+            test_ratio=0.0, random_seed=random_seed
+        )
+    else:
+        X_train, y_train = X_train_all, y_train_all
+        X_val, y_val = None, None
+
+    result = {
+        'X_train': X_train, 'y_train': y_train,
+        'X_val': X_val, 'y_val': y_val,
+        'X_test': X_test, 'y_test': y_test,
+        'classes': classes
+    }
+
+    if verbose:
+        n_val = len(y_val) if y_val is not None else 0
+        print(f"  完成: 训练 {len(y_train)} / 验证 {n_val} / 测试 {len(y_test)}")
+
+    return result
 
 
 def load_prepared_data(dataset_name, base_dir=None, split_val=True,
