@@ -198,9 +198,8 @@ class MainWindow(QMainWindow):
             'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/mnist_bp.pth'},
         }
         for name, cfg in feature_configs.items():
-            dim = get_feature_dim(cfg['method'], image=28,** cfg['kwargs'])
             # 修复核心报错：BPNet() 无参数传入
-            model = model = BPNetwork(input_size=784,hidden_size=256,output_size=10).to(self.device)
+            model = BPNetwork(input_size=784,hidden_size=256,output_size=10).to(self.device)
             if os.path.exists(cfg['weight']):
                 model.load_state_dict(torch.load(cfg['weight'], map_location=self.device))
                 model.eval()
@@ -216,7 +215,6 @@ class MainWindow(QMainWindow):
             'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/letters_bp.pth'},
         }
         for name, cfg in letter_feature_configs.items():
-            dim = get_feature_dim(cfg['method'], image=28,** cfg['kwargs'])
             # 字母模型和数字模型使用相同的BPNet结构（需确保emnist_bp.pth输出维度为26）
             model = BPNetwork(input_size=784,hidden_size=256,output_size=26).to(self.device)
             if os.path.exists(cfg['weight']):
