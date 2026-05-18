@@ -30,7 +30,7 @@ import matplotlib
 from matplotlib import rcParams
 # 导入模型及工具
 import torch
-from bp_network import BPNet
+from bp_network import BPNetwork
 # ---------------------- CNN 导入 注释（保留代码，不删除）----------------------
 # from cnn_inference import CNNInference
 # -----------------------------------------------------------------------------
@@ -195,12 +195,12 @@ class MainWindow(QMainWindow):
         # ---------- BP 数字模型（修复参数错误：无参初始化！）----------
         self.bp_digits_models = {}
         feature_configs = {
-            'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': 'mnist_bp.pth'},
+            'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/mnist_bp.pth'},
         }
         for name, cfg in feature_configs.items():
             dim = get_feature_dim(cfg['method'], image=28,** cfg['kwargs'])
             # 修复核心报错：BPNet() 无参数传入
-            model = BPNet(num_classes=10).to(self.device)
+            model = model = BPNetwork(input_size=784,hidden_size=256,output_size=10).to(self.device)
             if os.path.exists(cfg['weight']):
                 model.load_state_dict(torch.load(cfg['weight'], map_location=self.device))
                 model.eval()
@@ -213,12 +213,12 @@ class MainWindow(QMainWindow):
         # ========== 新增：字母BP模型加载（不改动上方数字模型代码） ==========
         self.bp_letters_models = {}
         letter_feature_configs = {
-            'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': 'emnist_bp.pth'},
+            'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/letters_bp.pth'},
         }
         for name, cfg in letter_feature_configs.items():
             dim = get_feature_dim(cfg['method'], image=28,** cfg['kwargs'])
             # 字母模型和数字模型使用相同的BPNet结构（需确保emnist_bp.pth输出维度为26）
-            model = BPNet(num_classes=47).to(self.device)
+            model = BPNetwork(input_size=784,hidden_size=256,output_size=26).to(self.device)
             if os.path.exists(cfg['weight']):
                 model.load_state_dict(torch.load(cfg['weight'], map_location=self.device))
                 model.eval()
