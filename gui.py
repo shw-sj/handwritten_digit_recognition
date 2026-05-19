@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-实验一：基于BP算法的手写数字识别 - 图形界面 (成员C)
+实验一：手写数字与字母识别 - 图形界面
 功能：
-  1. 手写数字识别模式（画板 + 数字识别 + 概率柱状图，仅保留BP像素）
-  2. 手写字母识别模式（解禁，预留BP框架，CNN代码已注释）
-  3. 语音数字识别模式（录音 + 波形显示 + 数字识别 + MFCC占位）
-  4. 模型切换（仅保留BP_像素）
-  5. 批量测试框架（模拟）
-  6. 可调节笔刷粗细、清空画板、实时显示结果
-
-注：CNN相关代码【仅注释，未删除】，BP模型参数已修复，编码已修复
+  1. 手写数字识别（CNN / BP 双模型，画板 + 概率柱状图）
+  2. 手写字母识别（CNN / BP 双模型，画板 + 概率柱状图）
+  3. 语音数字识别（录音 + 波形显示 + 数字识别 + MFCC占位）
+  4. 可调节笔刷粗细、清空画板、实时显示结果
 """
 
 import sys
@@ -31,9 +27,7 @@ from matplotlib import rcParams
 # 导入模型及工具
 import torch
 from bp_network import BPNetwork
-# ---------------------- CNN 导入 注释（保留代码，不删除）----------------------
-# from cnn_inference import CNNInference
-# -----------------------------------------------------------------------------
+from cnn_model_mnist import DeepCNN
 from image_loader import preprocess_single
 from image_feature import extract_features, get_feature_dim
 
@@ -181,18 +175,34 @@ class HandwritingWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("手写识别系统（BP测试版 - CNN已注释）")
+        self.setWindowTitle("手写识别系统（CNN + BP）")
         self.setGeometry(100, 100, 1200, 800)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # ---------------------- CNN 模型初始化 注释（保留代码）----------------------
-        # cnn_weight_path = os.path.join("models", "lenet5_mixed.pth")
-        # os.makedirs("models", exist_ok=True)
-        # self.cnn_digits = CNNInference(mode='digits', weight_path=cnn_weight_path)
-        # self.cnn_letters = CNNInference(mode='letters', weight_path=cnn_weight_path)
-        # -----------------------------------------------------------------------------
 
-        # ---------- BP 数字模型（修复参数错误：无参初始化！）----------
+        # ---------- CNN 数字模型 ----------
+        self.cnn_model = None
+        cnn_weight_path = os.path.join("weights", "cnn_mnist.pth")
+        if os.path.exists(cnn_weight_path):
+            self.cnn_model = DeepCNN(num_classes=10).to(self.device)
+            self.cnn_model.load_state_dict(torch.load(cnn_weight_path, map_location=self.device))
+            self.cnn_model.eval()
+            print(f"[成功] 加载 CNN 数字模型：{cnn_weight_path}")
+        else:
+            print(f"[警告] CNN 数字权重 {cnn_weight_path} 不存在，请先运行 cnn_model_mnist.py 训练")
+
+        # ---------- CNN 字母模型 ----------
+        self.cnn_letters_model = None
+        cnn_letters_path = os.path.join("weights", "cnn_letters.pth")
+        if os.path.exists(cnn_letters_path):
+            self.cnn_letters_model = DeepCNN(num_classes=26).to(self.device)
+            self.cnn_letters_model.load_state_dict(torch.load(cnn_letters_path, map_location=self.device))
+            self.cnn_letters_model.eval()
+            print(f"[成功] 加载 CNN 字母模型：{cnn_letters_path}")
+        else:
+            print(f"[警告] CNN 字母权重 {cnn_letters_path} 不存在，请先运行 cnn_model_letters.py 训练")
+
+        # ---------- BP 数字模型 ----------
         self.bp_digits_models = {}
         feature_configs = {
             'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/mnist_bp.pth'},
@@ -226,8 +236,9 @@ class MainWindow(QMainWindow):
             self.bp_letters_models[name] = model
         # ========== 新增结束 ==========
 
-        # 全局变量
+        # 全局变量 — 默认值稍后在工具栏初始化后设定
         self.current_model = "BP_像素"
+        self.current_letter_model = "CNN" if self.cnn_letters_model is not None else "字母BP_像素"
         self.recorder = None
         self.audio_data = None
         self.sample_rate = 16000
@@ -237,13 +248,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 顶部工具栏（模型选择 + 批量测试）
+        # 顶部工具栏（批量测试）
         toolbar = QHBoxLayout()
-        self.model_combo = QComboBox()
-        self.model_combo.addItems(["BP_像素","字母BP_像素"])
-        self.model_combo.currentTextChanged.connect(self.on_model_changed)
-        toolbar.addWidget(QLabel("数字识别模型："))
-        toolbar.addWidget(self.model_combo)
         toolbar.addStretch()
         self.batch_btn = QPushButton("批量测试(模拟)")
         self.batch_btn.clicked.connect(self.on_batch_test)
@@ -262,7 +268,7 @@ class MainWindow(QMainWindow):
         # 模式2：手写字母（解禁！不再禁用，CNN代码注释）
         self.letters_tab = QWidget()
         self.setup_letters_tab()
-        self.tab_widget.addTab(self.letters_tab, "手写字母识别（BP预留）")
+        self.tab_widget.addTab(self.letters_tab, "手写字母识别")
 
         # 模式3：语音数字
         self.voice_tab = QWidget()
@@ -289,9 +295,26 @@ class MainWindow(QMainWindow):
         brush_layout.addWidget(btn_clear)
         layout.addLayout(brush_layout, 2, 0)
 
+        # 结果标签 + 模型选择器
+        result_area = QVBoxLayout()
         self.digit_result_label = QLabel("识别结果: 未识别")
         self.digit_result_label.setStyleSheet("font-size: 24px; font-weight: bold;")
-        layout.addWidget(self.digit_result_label, 0, 1)
+        result_area.addWidget(self.digit_result_label)
+
+        digit_models = []
+        if self.cnn_model is not None:
+            digit_models.append("CNN")
+        digit_models.append("BP_像素")
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(digit_models)
+        self.current_model = digit_models[0]
+        self.model_combo.currentTextChanged.connect(self.on_model_changed)
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("数字模型:"))
+        model_row.addWidget(self.model_combo)
+        model_row.addStretch()
+        result_area.addLayout(model_row)
+        layout.addLayout(result_area, 0, 1)
 
         self.digit_confidence_canvas = ConfidenceBarCanvas(self, width=5, height=4)
         layout.addWidget(self.digit_confidence_canvas, 1, 1)
@@ -306,7 +329,7 @@ class MainWindow(QMainWindow):
         layout.setRowStretch(1, 2)
         layout.setRowStretch(2, 1)
 
-    # ----------------- 字母模式界面（解禁） -----------------
+    # ----------------- 字母模式界面 -----------------
     def setup_letters_tab(self):
         layout = QGridLayout(self.letters_tab)
 
@@ -326,9 +349,25 @@ class MainWindow(QMainWindow):
         brush_layout.addWidget(btn_clear)
         layout.addLayout(brush_layout, 2, 0)
 
-        self.letter_result_label = QLabel("识别结果: BP暂未训练字母模型")
-        self.letter_result_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #666;")
-        layout.addWidget(self.letter_result_label, 0, 1)
+        # 结果标签 + 模型选择器 (同一区域，与数字 tab 对齐)
+        result_area = QVBoxLayout()
+        self.letter_result_label = QLabel("识别结果: 未识别")
+        self.letter_result_label.setStyleSheet("font-size: 24px; font-weight: bold;")
+        result_area.addWidget(self.letter_result_label)
+
+        letter_models = []
+        if self.cnn_letters_model is not None:
+            letter_models.append("CNN")
+        letter_models.append("字母BP_像素")
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("字母模型:"))
+        self.letter_model_combo = QComboBox()
+        self.letter_model_combo.addItems(letter_models)
+        self.letter_model_combo.currentTextChanged.connect(self.on_letter_model_changed)
+        model_row.addWidget(self.letter_model_combo)
+        model_row.addStretch()
+        result_area.addLayout(model_row)
+        layout.addLayout(result_area, 0, 1)
 
         self.letter_confidence_canvas = ConfidenceBarCanvas(self, width=5, height=4)
         layout.addWidget(self.letter_confidence_canvas, 1, 1)
@@ -390,12 +429,19 @@ class MainWindow(QMainWindow):
 
         current = self.current_model
 
-        # ---------------------- CNN 分支 注释（保留代码）----------------------
-        # if current == 'CNN':
-        #     processed_float = processed.astype(np.float32) / 255.0
-        #     pred, probs = self.cnn_digits.predict(processed_float)
-        # ---------------------------------------------------------------------
-        if current in self.bp_digits_models:
+        if current == 'CNN' and self.cnn_model is not None:
+            # CNN 预处理：与训练时一致 Normalize((0.1307,), (0.3081,))
+            img_float = processed.astype(np.float32) / 255.0
+            img_norm = (img_float - 0.1307) / 0.3081
+            img_tensor = torch.from_numpy(img_norm).unsqueeze(0).unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                logits = self.cnn_model(img_tensor)
+                probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            pred = int(np.argmax(probs))
+        elif current == 'CNN' and self.cnn_model is None:
+            self.digit_result_label.setText("识别结果: CNN模型未加载")
+            return
+        elif current in self.bp_digits_models:
             method_map = {
                 'BP_像素': ('pixel', {'grid_size': 28}),
             }
@@ -416,54 +462,45 @@ class MainWindow(QMainWindow):
         self.digit_confidence_canvas.update_bars(probs, [str(i) for i in range(10)])
 
     def recognize_letter(self):
-    # 1. 获取画板图像并预处理（保留原有逻辑）
-      img_array = self.letter_canvas.get_image_array(target_size=(28,28))
-      pil_img = Image.fromarray((img_array * 255).astype('uint8'))
-      processed = preprocess_single(pil_img, target_size=28)
+        img_array = self.letter_canvas.get_image_array(target_size=(28,28))
+        pil_img = Image.fromarray((img_array * 255).astype('uint8'))
+        processed = preprocess_single(pil_img)
 
-    # 2. 选择当前BP模型（仅BP_像素）
-      current = self.current_model
-      if current in self.bp_letters_models:
-        # 3. 特征提取（保留原有逻辑）
-        method_map = {
-            'BP_像素': ('pixel', {'grid_size': 28}),
-        }
-        method, kwargs = method_map[current]
-        img_batch = processed[np.newaxis, ...]
-        features = extract_features(img_batch, method=method,** kwargs)
+        current = self.current_letter_model
 
-        # 4. BP模型预测（47类）
-        model = self.bp_letters_models[current]
-        model.eval()
-        with torch.no_grad():
-            feat_tensor = torch.from_numpy(features).float().to(self.device)
-            logits = model(feat_tensor)
-            probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+        if current == 'CNN' and self.cnn_letters_model is not None:
+            img_float = processed.astype(np.float32) / 255.0
+            img_norm = (img_float - 0.1307) / 0.3081
+            img_tensor = torch.from_numpy(img_norm).unsqueeze(0).unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                logits = self.cnn_letters_model(img_tensor)
+                probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            pred_idx = int(np.argmax(probs))
+            pred_char = chr(ord('A') + pred_idx)
+            letter_labels = [chr(ord('A') + i) for i in range(26)]
+        elif current == 'CNN' and self.cnn_letters_model is None:
+            self.letter_result_label.setText("识别结果: CNN字母模型未加载")
+            return
+        elif current in self.bp_letters_models:
+            img_batch = processed[np.newaxis, ...]
+            features = extract_features(img_batch, method='pixel', grid_size=28)
+            model = self.bp_letters_models[current]
+            model.eval()
+            with torch.no_grad():
+                feat_tensor = torch.from_numpy(features).float().to(self.device)
+                logits = model(feat_tensor)
+                probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            pred_idx = int(np.argmax(probs))
+            pred_char = chr(ord('A') + pred_idx)
+            letter_labels = [chr(ord('A') + i) for i in range(26)]
+        else:
+            self.letter_result_label.setText("识别结果: 模型未加载")
+            letter_labels = [chr(ord('A') + i) for i in range(26)]
+            self.letter_confidence_canvas.update_bars(np.zeros(26), letter_labels)
+            return
 
-        # 5. 修正：EMNIST 47类标签映射
-        def emnist_label_to_char(label):
-            # EMNIST ByMerge标签规则：0-9=数字，10-35=大写字母，36-46=小写字母
-            if 0 <= label <=9:
-                return str(label)
-            elif 10 <= label <=35:
-                return chr(ord('A') + label -10)
-            elif 36 <= label <=46:
-                return chr(ord('a') + label -36)
-            else:
-                return "未知"
-
-        pred_idx = np.argmax(probs)
-        pred_char = emnist_label_to_char(pred_idx)
-
-        # 6. 更新UI显示（47类标签）
         self.letter_result_label.setText(f"识别结果: {pred_char}")
-        letter_labels = [emnist_label_to_char(i) for i in range(47)]
         self.letter_confidence_canvas.update_bars(probs, letter_labels)
-      else:
-        # 兜底：模型不存在时的提示
-        self.letter_result_label.setText("识别结果: 模型未加载")
-        letter_labels = [f"类{i}" for i in range(47)]
-        self.letter_confidence_canvas.update_bars(np.zeros(47), letter_labels)
 
     # ----------------- 语音部分 -----------------
     def start_recording(self):
@@ -508,6 +545,10 @@ class MainWindow(QMainWindow):
     def on_model_changed(self, model_name):
         self.current_model = model_name
         print(f"切换到数字识别模型: {model_name}")
+
+    def on_letter_model_changed(self, model_name):
+        self.current_letter_model = model_name
+        print(f"切换到字母识别模型: {model_name}")
 
     def on_batch_test(self):
         folder = QFileDialog.getExistingDirectory(self, "选择包含图像/音频的测试文件夹")

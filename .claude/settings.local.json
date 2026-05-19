@@ -7,7 +7,12 @@
       "Bash(where python *)",
       "Bash(python -c ' *)",
       "Bash(python _fix_nb.py)",
-      "Bash(rm _fix_nb.py)"
+      "Bash(rm _fix_nb.py)",
+      "Bash(python cnn_model_mnist.py)",
+      "Bash(python cnn_model_letters.py)",
+      "Bash(python -c \"import gui; print\\('GUI 导入成功'\\)\")",
+      "Bash(python gui.py)",
+      "Bash(pip install *)"
     ]
   }
 }
