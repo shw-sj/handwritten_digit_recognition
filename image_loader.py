@@ -7,10 +7,29 @@
   - preprocess_single()  单张图像预处理（GUI画板实时识别用）
   - load_mnist()         加载MNIST数据集作为补充
 
-预处理流水线：灰度化 → 高斯去噪 → OTSU二值化 → 尺寸归一化(28×28)
+预处理流水线：原始扫描图
+    ↓
+灰度化
+    ↓
+二值化去噪
+    ↓
+提取数字区域
+    ↓
+缩放到 20×20
+    ↓
+抗锯齿平滑
+    ↓
+质心居中
+    ↓
+嵌入 28×28
+    ↓
+归一化
+    ↓
+输入神经网络
 """
 
 import os
+import cv2
 import struct
 import numpy as np
 from PIL import Image
@@ -19,103 +38,111 @@ from sklearn.model_selection import train_test_split
 # ============================================================
 # 预处理核心函数
 # ============================================================
+def to_uint8(img):
+    """统一转 uint8"""
+    if isinstance(img, Image.Image):
+        img = np.array(img)
+
+    if img.max() <= 1.0:
+        img = (img * 255)
+
+    return img.astype(np.uint8)
 
 
-def _to_grayscale(img):
-    """将图像转为灰度图，返回 (H, W) uint8 数组。"""
-    if isinstance(img, np.ndarray):
-        if img.ndim == 3:
-            img = np.mean(img, axis=2)
-        return img.astype(np.uint8)
-    return np.array(img.convert('L'), dtype=np.uint8)
+def binarize(img, thresh=30):
+    """二值化（保留黑底白字结构）"""
+    _, th = cv2.threshold(img, thresh, 255, cv2.THRESH_BINARY)
+    return th
 
 
-def _gaussian_blur(img, ksize=3):
-    """高斯去噪（OpenCV-free 实现，3×3 高斯核）。"""
-    if ksize == 3:
-        kernel = np.array([[1, 2, 1],
-                           [2, 4, 2],
-                           [1, 2, 1]], dtype=np.float32) / 16.0
-    elif ksize == 5:
-        kernel = np.array([[1,  4,  6,  4, 1],
-                           [4, 16, 24, 16, 4],
-                           [6, 24, 36, 24, 6],
-                           [4, 16, 24, 16, 4],
-                           [1,  4,  6,  4, 1]], dtype=np.float32) / 256.0
-    else:
-        raise ValueError(f"Unsupported ksize: {ksize}")
+def crop_digit(img):
+    """裁剪数字区域"""
+    coords = cv2.findNonZero(img)
+    if coords is None:
+        return None
 
+    x, y, w, h = cv2.boundingRect(coords)
+    return img[y:y+h, x:x+w]
+
+
+def resize_keep_ratio(img, size=20):
+    """等比例缩放到 size×size 内"""
     h, w = img.shape
-    pad = ksize // 2
-    padded = np.pad(img, pad, mode='reflect')
-    result = np.zeros_like(img, dtype=np.float32)
 
-    for i in range(h):
-        for j in range(w):
-            patch = padded[i:i + ksize, j:j + ksize].astype(np.float32)
-            result[i, j] = np.sum(patch * kernel)
+    if h > w:
+        new_h = size
+        new_w = max(1, int(w * size / h))
+    else:
+        new_w = size
+        new_h = max(1, int(h * size / w))
 
-    return np.clip(result, 0, 255).astype(np.uint8)
-
-
-def _otsu_threshold(img):
-    """OTSU 大津算法二值化，返回 (二值图, 阈值)。"""
-    hist, _ = np.histogram(img.ravel(), bins=256, range=(0, 256))
-    total = img.size
-    sum_all = np.dot(np.arange(256), hist)
-
-    weight_bg = 0
-    sum_bg = 0
-    max_var = 0
-    threshold = 127
-
-    for t in range(256):
-        weight_bg += hist[t]
-        if weight_bg == 0:
-            continue
-        weight_fg = total - weight_bg
-        if weight_fg == 0:
-            break
-
-        sum_bg += t * hist[t]
-        mean_bg = sum_bg / weight_bg
-        mean_fg = (sum_all - sum_bg) / weight_fg
-
-        var_between = weight_bg * weight_fg * (mean_bg - mean_fg) ** 2
-        if var_between > max_var:
-            max_var = var_between
-            threshold = t
-
-    binary = (img >= threshold).astype(np.uint8) * 255
-    return binary, threshold
+    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
-def _resize(img, target_size=(28, 28)):
-    """尺寸归一化（双线性插值，PIL 实现）。"""
-    pil_img = Image.fromarray(img)
-    pil_img = pil_img.resize(target_size, Image.BILINEAR)
-    return np.array(pil_img, dtype=np.uint8)
+def center_28x28(img_20x20ish):
+    """放入 28x28 画布并居中"""
+    canvas = np.zeros((28, 28), dtype=np.uint8)
+
+    h, w = img_20x20ish.shape
+
+    x_offset = (28 - w) // 2
+    y_offset = (28 - h) // 2
+
+    canvas[y_offset:y_offset+h, x_offset:x_offset+w] = img_20x20ish
+    return canvas
 
 
-def preprocess_single(img, target_size=28, denoise_ksize=3):
+def center_by_mass(img):
+    """质心居中（MNIST关键步骤）"""
+    moments = cv2.moments(img)
+
+    if moments["m00"] == 0:
+        return img
+
+    cx = int(moments["m10"] / moments["m00"])
+    cy = int(moments["m01"] / moments["m00"])
+
+    shift_x = 14 - cx
+    shift_y = 14 - cy
+
+    M = np.float32([[1, 0, shift_x],
+                    [0, 1, shift_y]])
+
+    return cv2.warpAffine(img, M, (28, 28))
+
+def preprocess_single(img):
     """
-    单张图像预处理流水线。
+        完整 MNIST 风格预处理
+        输入：numpy / PIL（黑底白字）
+        输出：28x28 uint8 图像
+        前景白、背景黑
+        自动裁剪数字区域
+        保持比例缩放到 20×20
+        放到 28×28 中央
+        使用质心居中
+        像素归一化
+        """
+    # 1. 类型统一
+    img = to_uint8(img)
 
-    参数:
-        img: PIL.Image 或 numpy 数组 (H,W) / (H,W,3)
-        target_size: 目标尺寸，默认 28
-        denoise_ksize: 高斯核大小，默认 3
+    # 2. 二值化
+    img = binarize(img)
 
-    返回:
-        preprocessed: 预处理后图像 (target_size, target_size) uint8
-        binary:      OTSU二值图 (target_size, target_size) uint8
-    """
-    gray = _to_grayscale(img)
-    denoised = _gaussian_blur(gray, ksize=denoise_ksize)
-    binary, _ = _otsu_threshold(denoised)
-    resized = _resize(binary, target_size=(target_size, target_size))
-    return resized, binary[:target_size, :target_size] if binary.shape != (target_size, target_size) else binary
+    # 3. 裁剪
+    cropped = crop_digit(img)
+    if cropped is None:
+        return np.zeros((28, 28), dtype=np.uint8)
 
+    # 4. 缩放
+    resized = resize_keep_ratio(cropped, size=20)
+
+    # 5. 放入 28x28
+    canvas = center_28x28(resized)
+
+    # 6. 质心居中（推荐）
+    canvas = center_by_mass(canvas)
+
+    return canvas
 
 # ============================================================
 # 批量数据加载与数据集划分
@@ -501,16 +528,28 @@ def load_torchvision_data(dataset_name, split_val=True,
         digits  = load_torchvision_data('mnist')                # 全量
         digits  = load_torchvision_data('mnist', max_train=500) # 演示用
     """
-    from torchvision import datasets
+    from torchvision import datasets,transforms
+
+    mnist_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+
+    emnist_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.RandomHorizontalFlip(p=1),  # 左右翻转
+        transforms.RandomRotation((-90, -90)),  # 逆时针转90度
+        transforms.Normalize((0.5,), (0.5,))
+    ])
 
     if dataset_name == 'mnist':
         if verbose:
             print("[image_loader] 通过 torchvision 加载 MNIST 手写数字数据集...")
         train_data = datasets.MNIST(
-            root='./data', train=True, download=True
+            root='./data', train=True, download=True, transform=mnist_transform
         )
         test_data = datasets.MNIST(
-            root='./data', train=False, download=True
+            root='./data', train=False, download=True, transform=mnist_transform
         )
         classes = [str(i) for i in range(10)]
 
@@ -518,10 +557,10 @@ def load_torchvision_data(dataset_name, split_val=True,
         if verbose:
             print("[image_loader] 通过 torchvision 加载 EMNIST-letters 手写字母数据集...")
         train_data = datasets.EMNIST(
-            root='./data', split='letters', train=True, download=True
+            root='./data', split='letters', train=True, download=True, transform=emnist_transform
         )
         test_data = datasets.EMNIST(
-            root='./data', split='letters', train=False, download=True
+            root='./data', split='letters', train=False, download=True, transform=emnist_transform
         )
         classes = [chr(ord('A') + i) for i in range(26)]
 
@@ -530,66 +569,12 @@ def load_torchvision_data(dataset_name, split_val=True,
             f"不支持的数据集: '{dataset_name}'，可选 'mnist' 或 'letters'"
         )
 
-    # 1. 转为 numpy 数组
-    n_train = max_train if max_train is not None else len(train_data)
-    n_test = max_test if max_test is not None else len(test_data)
-    if verbose:
-        print(f"  加载训练集 ({n_train} / {len(train_data)} 张)...")
-    X_train_all, y_train_all = _dataset_to_arrays(
-        train_data, max_samples=max_train, verbose=verbose, desc="训练集"
-    )
-
-    if verbose:
-        print(f"  加载测试集 ({n_test} / {len(test_data)} 张)...")
-    X_test, y_test = _dataset_to_arrays(
-        test_data, max_samples=max_test, verbose=verbose, desc="测试集"
-    )
-
-    # 2. EMNIST 图像需要转置（纠正原始存储的旋转+镜像方向）
-    if dataset_name == 'letters':
-        if verbose:
-            print("  校正 EMNIST 图像方向...")
-        X_train_all = np.transpose(X_train_all, (0, 2, 1))
-        X_test = np.transpose(X_test, (0, 2, 1))
-
-    # 3. 预处理流水线：灰度化 → 高斯去噪 → OTSU二值化 → 28×28归一化
-    if verbose:
-        print(f"  预处理训练集 ({len(X_train_all)} 张)...")
-    X_train_all = _batch_preprocess_images(
-        X_train_all, target_size=28, verbose=verbose, desc="训练集"
-    )
-
-    if verbose:
-        print(f"  预处理测试集 ({len(X_test)} 张)...")
-    X_test = _batch_preprocess_images(
-        X_test, target_size=28, verbose=verbose, desc="测试集"
-    )
-
-    # 4. 划分训练/验证/测试集
-    if split_val:
-        # 归一化比例（test_ratio=0 时需要调整 train/val 和为 1）
-        _sum = train_ratio + val_ratio
-        _train_r = train_ratio / _sum
-        _val_r = val_ratio / _sum
-        (X_train, y_train), (X_val, y_val), _ = split_dataset(
-            X_train_all, y_train_all,
-            train_ratio=_train_r, val_ratio=_val_r,
-            test_ratio=0.0, random_seed=random_seed
-        )
-    else:
-        X_train, y_train = X_train_all, y_train_all
-        X_val, y_val = None, None
 
     result = {
-        'X_train': X_train, 'y_train': y_train,
-        'X_val': X_val, 'y_val': y_val,
-        'X_test': X_test, 'y_test': y_test,
+        'train_data': train_data,
+        'test_data': test_data,
         'classes': classes
     }
-
-    if verbose:
-        n_val = len(y_val) if y_val is not None else 0
-        print(f"  完成: 训练 {len(y_train)} / 验证 {n_val} / 测试 {len(y_test)}")
 
     return result
 

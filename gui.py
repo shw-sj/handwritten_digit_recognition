@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         # ========== 新增：字母BP模型加载（不改动上方数字模型代码） ==========
         self.bp_letters_models = {}
         letter_feature_configs = {
-            'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/letters_bp.pth'},
+            '字母BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/letters_bp.pth'},
         }
         for name, cfg in letter_feature_configs.items():
             # 字母模型和数字模型使用相同的BPNet结构（需确保emnist_bp.pth输出维度为26）
@@ -240,7 +240,7 @@ class MainWindow(QMainWindow):
         # 顶部工具栏（模型选择 + 批量测试）
         toolbar = QHBoxLayout()
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["BP_像素"])
+        self.model_combo.addItems(["BP_像素","字母BP_像素"])
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
         toolbar.addWidget(QLabel("数字识别模型："))
         toolbar.addWidget(self.model_combo)
@@ -386,7 +386,7 @@ class MainWindow(QMainWindow):
     def recognize_digit(self):
         img_array = self.digit_canvas.get_image_array(target_size=(28,28))
         pil_img = Image.fromarray((img_array * 255).astype('uint8'))
-        processed, _ = preprocess_single(pil_img, target_size=28)
+        processed = preprocess_single(pil_img)
 
         current = self.current_model
 
@@ -419,7 +419,7 @@ class MainWindow(QMainWindow):
     # 1. 获取画板图像并预处理（保留原有逻辑）
       img_array = self.letter_canvas.get_image_array(target_size=(28,28))
       pil_img = Image.fromarray((img_array * 255).astype('uint8'))
-      processed, _ = preprocess_single(pil_img, target_size=28)
+      processed = preprocess_single(pil_img, target_size=28)
 
     # 2. 选择当前BP模型（仅BP_像素）
       current = self.current_model
@@ -431,7 +431,7 @@ class MainWindow(QMainWindow):
         method, kwargs = method_map[current]
         img_batch = processed[np.newaxis, ...]
         features = extract_features(img_batch, method=method,** kwargs)
-        
+
         # 4. BP模型预测（47类）
         model = self.bp_letters_models[current]
         model.eval()
@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
             feat_tensor = torch.from_numpy(features).float().to(self.device)
             logits = model(feat_tensor)
             probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
-        
+
         # 5. 修正：EMNIST 47类标签映射
         def emnist_label_to_char(label):
             # EMNIST ByMerge标签规则：0-9=数字，10-35=大写字母，36-46=小写字母
@@ -451,10 +451,10 @@ class MainWindow(QMainWindow):
                 return chr(ord('a') + label -36)
             else:
                 return "未知"
-        
+
         pred_idx = np.argmax(probs)
         pred_char = emnist_label_to_char(pred_idx)
-        
+
         # 6. 更新UI显示（47类标签）
         self.letter_result_label.setText(f"识别结果: {pred_char}")
         letter_labels = [emnist_label_to_char(i) for i in range(47)]

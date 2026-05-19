@@ -4,29 +4,25 @@ import torch.nn as nn
 import torch.optim as optim
 
 from bp_network import BPNetwork
-from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+from image_loader import load_torchvision_data
+
 
 batch_size=64
 
-transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
+digits = load_torchvision_data('mnist')
 
-train_dataset = datasets.MNIST(
-        root='./data',
-        train=True,
-        download=True,
-        transform=transform
-    )
+train_dataset, test_dataset = digits['train_data'], digits['test_data']
 
-test_dataset = datasets.MNIST(
-        root='./data',
-        train=False,
-        download=True,
-        transform=transform
-    )
+# 设备
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
+# 模型
+model = BPNetwork(
+    input_size=784,
+    hidden_size=256,
+    output_size=10
+).to(device)
 
 train_loader = DataLoader(
         train_dataset,
@@ -41,9 +37,7 @@ test_loader = DataLoader(
     )
 
 
-# 设备
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
+
 # 模型
 model = BPNetwork(
     input_size=784,
@@ -116,6 +110,9 @@ with torch.no_grad():
         correct += (predicted == labels).sum().item()
 
 print(f"MNIST Accuracy: {100 * correct / total:.2f}%")
+
+# 保存模型
+torch.save(model.state_dict(), "./weights/mnist_bp.pth")
 
 # 保存模型
 os.makedirs("weights", exist_ok=True)
