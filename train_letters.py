@@ -2,34 +2,20 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import numpy as np
 from bp_network import BPNetwork
-from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+from image_loader import load_torchvision_data
+from metrics import evaluate_classification
 
 batch_size=64
 
-transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
+digits = load_torchvision_data('letters')
 
-train_dataset = datasets.EMNIST(
-        root='./data',
-        split='letters',
-        train=True,
-        download=True,
-        transform=transform
-    )
+train_dataset, test_dataset = digits['train_data'], digits['test_data']
 
-test_dataset = datasets.EMNIST(
-        root='./data',
-        split='letters',
-        train=False,
-        download=True,
-        transform=transform
-    )
-
+# 设备
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -42,15 +28,11 @@ test_loader = DataLoader(
         shuffle=False
     )
 
-
-# 设备
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 # 模型
 model = BPNetwork(
     input_size=784,
-    hidden_size=256,
-    output_size=26
+    output_size=26,
+    task="letters"
 ).to(device)
 
 
@@ -61,60 +43,60 @@ optimizer = optim.Adam(
     lr=0.001
 )
 
-
-epochs = 10
-
-for epoch in range(epochs):
-
+def train(model, train_loader, criterion, optimizer, epochs=10):
     model.train()
+    for epoch in range(epochs):
+        total_loss = 0
+        for images, labels in train_loader:
+            images = images.view(-1, 784).to(device)
+            labels = (labels-1).to(device)
 
-    total_loss = 0
+            # 前向传播
+            outputs = model(images)
 
-    for images, labels in train_loader:
+            loss = criterion(outputs, labels)
 
-        images = images.view(-1, 784).to(device)
+            # 反向传播
+            optimizer.zero_grad()
 
-        # labels范围 1~26
-        labels = (labels - 1).to(device)
+            loss.backward()
 
-        outputs = model(images)
+            optimizer.step()
 
-        loss = criterion(outputs, labels)
+            total_loss += loss.item()
 
-        optimizer.zero_grad()
+        print(f"Epoch [{epoch + 1}/{epochs}] Loss: {total_loss:.4f}")
 
-        loss.backward()
-
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    print(f"Epoch [{epoch+1}/{epochs}] Loss: {total_loss:.4f}")
-
-
-# 测试
-model.eval()
-
-correct = 0
-total = 0
-
-with torch.no_grad():
-
-    for images, labels in test_loader:
-
-        images = images.view(-1, 784).to(device)
-
-        labels = (labels - 1).to(device)
-
-        outputs = model(images)
-
-        _, predicted = torch.max(outputs, 1)
-
-        total += labels.size(0)
-
-        correct += (predicted == labels).sum().item()
-
-print(f"Letters Accuracy: {100 * correct / total:.2f}%")
+train(model, train_loader, criterion, optimizer, epochs=10)
 
 os.makedirs("weights", exist_ok=True)
 torch.save(model.state_dict(), "./weights/letters_bp.pth")
+print("Model saved!")
+
+def evaluate(model, test_loader):
+    model.eval()
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images = images.view(-1, 784).to(device)
+            labels = (labels - 1).to(device)
+
+            outputs = model(images)
+            _, predicted = torch.max(outputs, 1)
+
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    # 使用sklearn的评估函数
+    metrics = evaluate_classification(
+        np.array(all_labels),
+        np.array(all_preds),
+        average="macro"
+    )
+
+    return metrics
+
+# 评估模型
+evaluate(model, test_loader)

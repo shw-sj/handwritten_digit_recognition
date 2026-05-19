@@ -4,7 +4,7 @@
 功能：
   1. 手写数字识别（CNN / BP 双模型，画板 + 概率柱状图）
   2. 手写字母识别（CNN / BP 双模型，画板 + 概率柱状图）
-  3. 语音数字识别（录音 + 波形显示 + 数字识别 + MFCC占位）
+  3. 语音数字识别（录音 + 波形/MFCC + BP语音数字模型）
   4. 可调节笔刷粗细、清空画板、实时显示结果
 """
 
@@ -29,7 +29,14 @@ import torch
 from bp_network import BPNetwork
 from cnn_model_mnist import DeepCNN
 from image_loader import preprocess_single
-from image_feature import extract_features, get_feature_dim
+from voice_process import audio_to_mfcc_matrix, audio_to_feature_tensor, VOICE_INPUT_SIZE
+
+try:
+    import librosa
+    VOICE_BACKEND = True
+except ImportError:
+    VOICE_BACKEND = False
+    print("Warning: librosa not installed, voice recognition disabled. Try: pip install librosa")
 
 # 设置字体为 SimHei（黑体）或其他支持中文的字体
 rcParams['font.sans-serif'] = ['SimHei']
@@ -203,42 +210,49 @@ class MainWindow(QMainWindow):
             print(f"[警告] CNN 字母权重 {cnn_letters_path} 不存在，请先运行 cnn_model_letters.py 训练")
 
         # ---------- BP 数字模型 ----------
-        self.bp_digits_models = {}
-        feature_configs = {
-            'BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/mnist_bp.pth'},
-        }
-        for name, cfg in feature_configs.items():
-            # 修复核心报错：BPNet() 无参数传入
-            model = BPNetwork(input_size=784,hidden_size=256,output_size=10).to(self.device)
-            if os.path.exists(cfg['weight']):
-                model.load_state_dict(torch.load(cfg['weight'], map_location=self.device))
-                model.eval()
-                # 移除emoji，修复GBK编码错误
-                print(f"[成功] 加载 {name} 模型成功：{cfg['weight']}")
-            else:
-                print(f"[警告] {cfg['weight']} 不存在，使用随机权重")
-            self.bp_digits_models[name] = model
+        self.bp_digits_model = None
+        bp_digits_path = os.path.join("weights", "mnist_bp.pth")
+        if os.path.exists(bp_digits_path):
+            self.bp_digits_model = BPNetwork(input_size=784,output_size=10).to(self.device)
+            self.bp_digits_model.load_state_dict(torch.load(bp_digits_path, map_location=self.device))
+            self.bp_digits_model.eval()
+            print(f"[成功] 加载 BP 数字模型：{bp_digits_path}")
+        else:
+            print(f"[警告] BP 数字权重 {bp_digits_path} 不存在，请先运行 train_mnist.py 训练")
 
-        # ========== 新增：字母BP模型加载（不改动上方数字模型代码） ==========
-        self.bp_letters_models = {}
-        letter_feature_configs = {
-            '字母BP_像素': {'method': 'pixel', 'kwargs': {'grid_size': 28}, 'weight': './weights/letters_bp.pth'},
-        }
-        for name, cfg in letter_feature_configs.items():
-            # 字母模型和数字模型使用相同的BPNet结构（需确保emnist_bp.pth输出维度为26）
-            model = BPNetwork(input_size=784,hidden_size=256,output_size=26).to(self.device)
-            if os.path.exists(cfg['weight']):
-                model.load_state_dict(torch.load(cfg['weight'], map_location=self.device))
-                model.eval()
-                print(f"[成功] 加载字母 {name} 模型成功：{cfg['weight']}")
-            else:
-                print(f"[警告] 字母模型 {cfg['weight']} 不存在，使用随机权重")
-            self.bp_letters_models[name] = model
-        # ========== 新增结束 ==========
+        # ---------- BP 字母模型 ----------
+        self.bp_letters_model = None
+        bp_letters_path = os.path.join("weights", "letters_bp.pth")
+        if os.path.exists(bp_letters_path):
+            self.bp_letters_model = BPNetwork(input_size=784, output_size=26, task="letters").to(self.device)
+            self.bp_letters_model.load_state_dict(torch.load(bp_letters_path, map_location=self.device))
+            self.bp_letters_model.eval()
+            print(f"[成功] 加载 BP 字母模型：{bp_letters_path}")
+        else:
+            print(f"[警告] BP 字母权重 {bp_letters_path} 不存在，请先运行 train_letters.py 训练")
+
+        # ---------- BP 语音数字模型 ----------
+        self.bp_voice_digits_model = None
+        bp_voice_path = os.path.join("weights", "voice_digits_bp.pth")
+        if os.path.exists(bp_voice_path):
+            self.bp_voice_digits_model = BPNetwork(
+                input_size=VOICE_INPUT_SIZE, output_size=10
+            ).to(self.device)
+            self.bp_voice_digits_model.load_state_dict(
+                torch.load(bp_voice_path, map_location=self.device)
+            )
+            self.bp_voice_digits_model.eval()
+            print(f"[成功] 加载 BP 语音数字模型：{bp_voice_path}")
+        else:
+            print(
+                f"[警告] BP 语音数字权重 {bp_voice_path} 不存在，"
+                "请先运行 train_voice_digits.py 训练"
+            )
 
         # 全局变量 — 默认值稍后在工具栏初始化后设定
-        self.current_model = "BP_像素"
-        self.current_letter_model = "CNN" if self.cnn_letters_model is not None else "字母BP_像素"
+        self.current_model = "BP_digits"
+        self.current_letter_model = "CNN" if self.cnn_letters_model is not None else "BP_letters"
+        self.current_voice_model = "bp_voice_digits"
         self.recorder = None
         self.audio_data = None
         self.sample_rate = 16000
@@ -304,7 +318,7 @@ class MainWindow(QMainWindow):
         digit_models = []
         if self.cnn_model is not None:
             digit_models.append("CNN")
-        digit_models.append("BP_像素")
+        digit_models.append("BP")
         self.model_combo = QComboBox()
         self.model_combo.addItems(digit_models)
         self.current_model = digit_models[0]
@@ -358,7 +372,7 @@ class MainWindow(QMainWindow):
         letter_models = []
         if self.cnn_letters_model is not None:
             letter_models.append("CNN")
-        letter_models.append("字母BP_像素")
+        letter_models.append("BP")
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("字母模型:"))
         self.letter_model_combo = QComboBox()
@@ -399,11 +413,17 @@ class MainWindow(QMainWindow):
         self.waveform_canvas.figure.tight_layout()
         left_panel.addWidget(self.waveform_canvas)
 
-        mfcc_label = QLabel("MFCC频谱图 (集成后显示)")
-        mfcc_label.setAlignment(Qt.AlignCenter)
-        mfcc_label.setStyleSheet("border: 1px solid gray; background: #f0f0f0;")
-        mfcc_label.setFixedHeight(150)
-        left_panel.addWidget(mfcc_label)
+        self.mfcc_canvas = FigureCanvas(Figure(figsize=(5, 2)))
+        self.mfcc_ax = self.mfcc_canvas.figure.subplots()
+        self.mfcc_ax.set_title("MFCC 特征")
+        self.mfcc_ax.set_xlabel("帧")
+        self.mfcc_ax.set_ylabel("系数")
+        self.mfcc_canvas.figure.tight_layout()
+        left_panel.addWidget(self.mfcc_canvas)
+
+        btn_load_audio = QPushButton("加载音频文件")
+        btn_load_audio.clicked.connect(self.load_voice_file)
+        left_panel.addWidget(btn_load_audio)
 
         layout.addLayout(left_panel)
 
@@ -411,6 +431,15 @@ class MainWindow(QMainWindow):
         self.voice_result_label = QLabel("识别结果: 未识别")
         self.voice_result_label.setStyleSheet("font-size: 24px; font-weight: bold;")
         right_panel.addWidget(self.voice_result_label)
+
+        voice_model_row = QHBoxLayout()
+        voice_model_row.addWidget(QLabel("语音模型:"))
+        self.voice_model_combo = QComboBox()
+        self.voice_model_combo.addItem("BP语音数字", "bp_voice_digits")
+        self.voice_model_combo.currentIndexChanged.connect(self.on_voice_model_changed)
+        voice_model_row.addWidget(self.voice_model_combo)
+        voice_model_row.addStretch()
+        right_panel.addLayout(voice_model_row)
 
         self.voice_confidence_canvas = ConfidenceBarCanvas(self, width=5, height=4)
         right_panel.addWidget(self.voice_confidence_canvas)
@@ -441,20 +470,17 @@ class MainWindow(QMainWindow):
         elif current == 'CNN' and self.cnn_model is None:
             self.digit_result_label.setText("识别结果: CNN模型未加载")
             return
-        elif current in self.bp_digits_models:
-            method_map = {
-                'BP_像素': ('pixel', {'grid_size': 28}),
-            }
-            method, kwargs = method_map[current]
-            img_batch = processed[np.newaxis, ...]
-            features = extract_features(img_batch, method=method, **kwargs)
-            model = self.bp_digits_models[current]
-            model.eval()
+        elif current == 'BP' and self.bp_digits_model is not None:
+            img_float = processed.astype(np.float32) / 255.0
+            img_flat = img_float.flatten()  # ✓ 展平成 784 维
+            processed_tensor = torch.from_numpy(img_flat).unsqueeze(0).float().to(self.device)
             with torch.no_grad():
-                feat_tensor = torch.from_numpy(features).float().to(self.device)
-                logits = model(feat_tensor)
+                logits = self.bp_digits_model(processed_tensor)
                 probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
             pred = int(np.argmax(probs))
+        elif current == 'BP' and self.bp_digits_model is None:
+            self.digit_result_label.setText("识别结果: BP模型未加载")
+            return
         else:
             pred, probs = 0, np.ones(10)/10
 
@@ -481,18 +507,19 @@ class MainWindow(QMainWindow):
         elif current == 'CNN' and self.cnn_letters_model is None:
             self.letter_result_label.setText("识别结果: CNN字母模型未加载")
             return
-        elif current in self.bp_letters_models:
-            img_batch = processed[np.newaxis, ...]
-            features = extract_features(img_batch, method='pixel', grid_size=28)
-            model = self.bp_letters_models[current]
-            model.eval()
+        elif current == 'BP' and self.bp_letters_model is not None:
+            img_float = processed.astype(np.float32) / 255.0
+            img_flat = img_float.flatten()
+            processed_tensor = torch.from_numpy(img_flat).unsqueeze(0).float().to(self.device)
             with torch.no_grad():
-                feat_tensor = torch.from_numpy(features).float().to(self.device)
-                logits = model(feat_tensor)
+                logits = self.bp_letters_model(processed_tensor)
                 probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
             pred_idx = int(np.argmax(probs))
             pred_char = chr(ord('A') + pred_idx)
             letter_labels = [chr(ord('A') + i) for i in range(26)]
+        elif current == 'BP' and self.bp_letters_model is None:
+            self.letter_result_label.setText("识别结果: BP字母模型未加载")
+            return
         else:
             self.letter_result_label.setText("识别结果: 模型未加载")
             letter_labels = [chr(ord('A') + i) for i in range(26)]
@@ -532,14 +559,76 @@ class MainWindow(QMainWindow):
             self.waveform_ax.set_title("录音失败或无音频设备")
             self.waveform_canvas.draw()
 
+    def load_voice_file(self):
+        if not VOICE_BACKEND:
+            self.voice_result_label.setText("识别结果: 请安装 librosa")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择音频文件", "", "音频 (*.wav *.mp3 *.flac);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            audio, sr = librosa.load(path, sr=None, mono=True)
+            self.audio_data = audio.astype(np.float32)
+            self.sample_rate = sr
+            self.waveform_ax.clear()
+            self.waveform_ax.plot(np.arange(len(audio)), audio)
+            self.waveform_ax.set_title("已加载音频波形")
+            self.waveform_ax.set_xlabel("采样点")
+            self.waveform_canvas.draw_idle()
+            self.voice_result_label.setText(f"已加载: {os.path.basename(path)}")
+        except Exception as e:
+            self.voice_result_label.setText(f"加载失败: {e}")
+
+    def update_mfcc_plot(self, mfcc):
+        self.mfcc_ax.clear()
+        self.mfcc_ax.imshow(mfcc, aspect="auto", origin="lower", cmap="viridis")
+        self.mfcc_ax.set_title("MFCC 特征")
+        self.mfcc_ax.set_xlabel("帧")
+        self.mfcc_ax.set_ylabel("系数")
+        self.mfcc_canvas.figure.tight_layout()
+        self.mfcc_canvas.draw_idle()
+
     def recognize_voice(self):
         if self.audio_data is None or len(self.audio_data) == 0:
-            self.voice_result_label.setText("请先录音")
+            self.voice_result_label.setText("请先录音或加载音频")
             return
-        pred = np.random.randint(0, 10)
-        probs = np.random.dirichlet(np.ones(10))
+        if not VOICE_BACKEND:
+            self.voice_result_label.setText("识别结果: 请安装 librosa")
+            return
+
+        try:
+            mfcc = audio_to_mfcc_matrix(self.audio_data, self.sample_rate)
+            self.update_mfcc_plot(mfcc)
+        except Exception as e:
+            self.voice_result_label.setText(f"特征提取失败: {e}")
+            return
+
+        current = self.current_voice_model
+        digit_labels = [str(i) for i in range(10)]
+
+        if current == "bp_voice_digits" and self.bp_voice_digits_model is not None:
+            try:
+                features = audio_to_feature_tensor(
+                    self.audio_data, self.sample_rate, self.device
+                )
+                with torch.no_grad():
+                    logits = self.bp_voice_digits_model(features)
+                    probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+                pred = int(np.argmax(probs))
+            except Exception as e:
+                self.voice_result_label.setText(f"识别失败: {e}")
+                return
+        elif current == "bp_voice_digits":
+            self.voice_result_label.setText("识别结果: BP语音模型未加载")
+            return
+        else:
+            self.voice_result_label.setText("识别结果: 未知模型")
+            return
+
         self.voice_result_label.setText(f"识别结果: {pred}")
-        self.voice_confidence_canvas.update_bars(probs, [str(i) for i in range(10)])
+        self.voice_confidence_canvas.update_bars(probs, digit_labels)
 
     # ----------------- 模型切换和批量测试 -----------------
     def on_model_changed(self, model_name):
@@ -549,6 +638,10 @@ class MainWindow(QMainWindow):
     def on_letter_model_changed(self, model_name):
         self.current_letter_model = model_name
         print(f"切换到字母识别模型: {model_name}")
+
+    def on_voice_model_changed(self, _index):
+        self.current_voice_model = self.voice_model_combo.currentData()
+        print(f"切换到语音识别模型: {self.current_voice_model}")
 
     def on_batch_test(self):
         folder = QFileDialog.getExistingDirectory(self, "选择包含图像/音频的测试文件夹")

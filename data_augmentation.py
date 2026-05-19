@@ -186,8 +186,7 @@ def augment_dataset(images, labels, factor=3, random_seed=42):
         for i in range(N):
             # 每张图每轮使用不同种子
             seed_i = random_seed + aug_round * N + i
-            batch_imgs[i] = augment_single(images[i],
-                                           rng=np.random.RandomState(seed_i))
+            batch_imgs[i] = augment_single(images[i], rng=np.random.RandomState(seed_i))
         aug_images.append(batch_imgs)
         aug_labels.append(labels)
 

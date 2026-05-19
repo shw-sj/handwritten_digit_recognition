@@ -32,6 +32,7 @@ import os
 import cv2
 import struct
 import numpy as np
+import torch
 from PIL import Image
 from sklearn.model_selection import train_test_split
 
@@ -537,8 +538,8 @@ def load_torchvision_data(dataset_name, split_val=True,
 
     emnist_transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.RandomHorizontalFlip(p=1),  # 左右翻转
-        transforms.RandomRotation((-90, -90)),  # 逆时针转90度
+        transforms.Lambda(lambda x: torch.rot90(x, -1, [1, 2])),
+        transforms.Lambda(lambda x: torch.flip(x, [2])),
         transforms.Normalize((0.5,), (0.5,))
     ])
 

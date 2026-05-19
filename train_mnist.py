@@ -2,11 +2,11 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import numpy as np
 from bp_network import BPNetwork
 from torch.utils.data import DataLoader
 from image_loader import load_torchvision_data
-
+from metrics import evaluate_classification
 
 batch_size=64
 
@@ -16,11 +16,10 @@ train_dataset, test_dataset = digits['train_data'], digits['test_data']
 
 # 设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
+
 # 模型
 model = BPNetwork(
     input_size=784,
-    hidden_size=256,
     output_size=10
 ).to(device)
 
@@ -36,19 +35,8 @@ test_loader = DataLoader(
         shuffle=False
     )
 
-
-
-# 模型
-model = BPNetwork(
-    input_size=784,
-    hidden_size=256,
-    output_size=10
-).to(device)
-
-
 # 损失函数
 criterion = nn.CrossEntropyLoss()
-
 
 # 优化器
 optimizer = optim.Adam(
@@ -56,64 +44,61 @@ optimizer = optim.Adam(
     lr=0.001
 )
 
-
-# 训练
-epochs = 10
-
-for epoch in range(epochs):
-
+def train(model, train_loader, criterion, optimizer, epochs=10):
     model.train()
+    for epoch in range(epochs):
+        total_loss = 0
+        for images, labels in train_loader:
+            images = images.view(-1, 784).to(device)
+            labels = labels.to(device)
 
-    total_loss = 0
+            # 前向传播
+            outputs = model(images)
 
-    for images, labels in train_loader:
+            loss = criterion(outputs, labels)
 
-        images = images.view(-1, 784).to(device)
-        labels = labels.to(device)
+            # 反向传播
+            optimizer.zero_grad()
 
-        # 前向传播
-        outputs = model(images)
+            loss.backward()
 
-        loss = criterion(outputs, labels)
+            optimizer.step()
 
-        # 反向传播
-        optimizer.zero_grad()
+            total_loss += loss.item()
 
-        loss.backward()
+        print(f"Epoch [{epoch + 1}/{epochs}] Loss: {total_loss:.4f}")
 
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    print(f"Epoch [{epoch+1}/{epochs}] Loss: {total_loss:.4f}")
-
-
-# 测试
-model.eval()
-
-correct = 0
-total = 0
-
-with torch.no_grad():
-
-    for images, labels in test_loader:
-
-        images = images.view(-1, 784).to(device)
-        labels = labels.to(device)
-
-        outputs = model(images)
-
-        _, predicted = torch.max(outputs, 1)
-
-        total += labels.size(0)
-
-        correct += (predicted == labels).sum().item()
-
-print(f"MNIST Accuracy: {100 * correct / total:.2f}%")
-
-# 保存模型
-torch.save(model.state_dict(), "./weights/mnist_bp.pth")
+train(model, train_loader, criterion, optimizer, epochs=10)
 
 # 保存模型
 os.makedirs("weights", exist_ok=True)
 torch.save(model.state_dict(), "./weights/mnist_bp.pth")
+print("Model saved!")
+def evaluate(model, test_loader):
+    model.eval()
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images = images.view(-1, 784).to(device)
+            labels = labels.to(device)
+
+            outputs = model(images)
+            _, predicted = torch.max(outputs, 1)
+
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    # 使用sklearn的评估函数
+    metrics = evaluate_classification(
+        np.array(all_labels),
+        np.array(all_preds),
+        average="macro"
+    )
+
+    return metrics
+
+# 评估模型
+
+evaluate(model, test_loader)
