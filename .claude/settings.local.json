@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python gui.py)",
+      "Bash(conda install *)"
+    ]
+  }
+}
