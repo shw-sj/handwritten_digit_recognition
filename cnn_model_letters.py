@@ -1,12 +1,11 @@
 # cnn_model_letters.py
 # CNN 模型定义 + 训练脚本 (EMNIST Letters 手写字母识别)
-# 模仿 train_letters.py 结构，使用 DeepCNN 架构
-
+# 已加入与评估一致的方向修正（rot90 + flip）
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
 from torchvision import datasets, transforms
 import os
 import sys
@@ -17,13 +16,9 @@ if sys.platform == 'win32':
 
 
 class DeepCNN(nn.Module):
-    """
-    高精度 CNN，用于 28x28 灰度手写字母识别 (A-Z, 26类)。
-    三层卷积 + BatchNorm + Dropout。
-    """
+    """高精度 CNN，用于 28x28 灰度手写字母识别 (A-Z, 26类)。"""
     def __init__(self, num_classes=26):
         super(DeepCNN, self).__init__()
-
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 32, kernel_size=3, padding=1)
@@ -68,9 +63,17 @@ class DeepCNN(nn.Module):
 
 
 # ============================================================
-# 训练脚本 (模仿 train_letters.py 结构)
+# 方向修正函数（与 compare.py 完全一致）
 # ============================================================
+def correct_emnist_orientation(x):
+    """修正 EMNIST 图像的旋转和镜像，使其变为正常朝向"""
+    # x 是 PIL Image 或 Tensor，这里定义成适合 transform.Lambda 的格式
+    return torch.rot90(x, k=1, dims=[1, 2]).flip(dims=[2])
 
+
+# ============================================================
+# 训练脚本
+# ============================================================
 if __name__ == "__main__":
     BATCH_SIZE = 64
     EPOCHS = 30
@@ -79,46 +82,44 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    # 训练集的增强 pipeline：先修正方向，再随机增强
     transform_train = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Lambda(correct_emnist_orientation),  # 先修正方向
         transforms.RandomRotation(15),
         transforms.RandomAffine(0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-        transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
     ])
 
-    transform_test = transforms.Compose([
+    # 验证集 / 测试集：只修正方向 + 标准化
+    transform_eval = transforms.Compose([
         transforms.ToTensor(),
+        transforms.Lambda(correct_emnist_orientation),
         transforms.Normalize((0.1307,), (0.3081,))
     ])
 
+    # 加载完整训练集（用于训练和切分验证集）
     full_train = datasets.EMNIST(
         root='./data', split='letters', train=True,
         download=True, transform=transform_train
     )
+    # 测试集使用 transform_eval
     test_dataset = datasets.EMNIST(
         root='./data', split='letters', train=False,
-        download=True, transform=transform_test
+        download=True, transform=transform_eval
     )
 
     # 从训练集中切出验证集 (8:2)
     val_size = int(0.2 * len(full_train))
     train_size = len(full_train) - val_size
-    train_indices, val_indices = random_split(
-        range(len(full_train)), [train_size, val_size],
+    train_dataset, val_dataset = random_split(
+        full_train, [train_size, val_size],
         generator=torch.Generator().manual_seed(42)
     )
 
-    from torch.utils.data import Subset
-    full_train_test = datasets.EMNIST(
-        root='./data', split='letters', train=True,
-        download=False, transform=transform_test
-    )
-    train_dataset = Subset(full_train, train_indices.indices)
-    val_dataset = Subset(full_train_test, val_indices.indices)
-
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
 
     print(f"Train: {train_size}, Val: {val_size}, Test: {len(test_dataset)}")
 
@@ -185,6 +186,7 @@ if __name__ == "__main__":
             torch.save(model.state_dict(), best_model_path)
             print(f"  -> 保存最佳模型 (Val Acc: {best_val_acc:.2f}%)")
 
+    # 加载最佳模型并测试
     model.load_state_dict(torch.load(best_model_path, map_location=device))
     model.eval()
 

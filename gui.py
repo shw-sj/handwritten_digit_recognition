@@ -86,7 +86,7 @@ class AudioRecorder(QThread):
     def stop(self):
         self.stop_flag = True
 
-# ---------- 置信度柱状图 Canvas ----------
+# 置信度柱状图 Canvas
 class ConfidenceBarCanvas(FigureCanvas):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.fig = Figure(figsize=(width, height), dpi=dpi)
@@ -187,7 +187,7 @@ class MainWindow(QMainWindow):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # ---------- CNN 数字模型 ----------
+        # CNN 数字模型 
         self.cnn_model = None
         cnn_weight_path = os.path.join("weights", "cnn_mnist.pth")
         if os.path.exists(cnn_weight_path):
@@ -197,8 +197,7 @@ class MainWindow(QMainWindow):
             print(f"[成功] 加载 CNN 数字模型：{cnn_weight_path}")
         else:
             print(f"[警告] CNN 数字权重 {cnn_weight_path} 不存在，请先运行 cnn_model_mnist.py 训练")
-
-        # ---------- CNN 字母模型 ----------
+        # CNN 字母模型 
         self.cnn_letters_model = None
         cnn_letters_path = os.path.join("weights", "cnn_letters.pth")
         if os.path.exists(cnn_letters_path):
@@ -279,7 +278,7 @@ class MainWindow(QMainWindow):
         self.setup_digits_tab()
         self.tab_widget.addTab(self.digits_tab, "手写数字识别")
 
-        # 模式2：手写字母（解禁！不再禁用，CNN代码注释）
+        # 模式2：手写字母
         self.letters_tab = QWidget()
         self.setup_letters_tab()
         self.tab_widget.addTab(self.letters_tab, "手写字母识别")

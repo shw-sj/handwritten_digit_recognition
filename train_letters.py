@@ -7,6 +7,12 @@ from bp_network import BPNetwork
 from torch.utils.data import DataLoader
 from image_loader import load_torchvision_data
 from metrics import evaluate_classification
+import sys
+
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+
 
 batch_size=64
 
@@ -43,7 +49,7 @@ optimizer = optim.Adam(
     lr=0.001
 )
 
-def train(model, train_loader, criterion, optimizer, epochs=10):
+def train(model, train_loader, criterion, optimizer, epochs=30):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
@@ -67,7 +73,7 @@ def train(model, train_loader, criterion, optimizer, epochs=10):
 
         print(f"Epoch [{epoch + 1}/{epochs}] Loss: {total_loss:.4f}")
 
-train(model, train_loader, criterion, optimizer, epochs=10)
+train(model, train_loader, criterion, optimizer, epochs=30)
 
 os.makedirs("weights", exist_ok=True)
 torch.save(model.state_dict(), "./weights/letters_bp.pth")
