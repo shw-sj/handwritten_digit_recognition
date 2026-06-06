@@ -28,7 +28,7 @@ from matplotlib import rcParams
 import torch
 from bp_network import BPNetwork
 from cnn_model_mnist import DeepCNN
-from image_loader import preprocess_single
+from image_loader import preprocess_single, preprocess_letter
 from voice_process import audio_to_mfcc_matrix, audio_to_feature_tensor, VOICE_INPUT_SIZE
 
 try:
@@ -487,15 +487,21 @@ class MainWindow(QMainWindow):
         self.digit_confidence_canvas.update_bars(probs, [str(i) for i in range(10)])
 
     def recognize_letter(self):
-        img_array = self.letter_canvas.get_image_array(target_size=(28,28))
-        pil_img = Image.fromarray((img_array * 255).astype('uint8'))
-        processed = preprocess_single(pil_img)
+        # 从画布获取原始分辨率图像（保留灰度，不做二值化）
+        qimage = self.letter_canvas.image.toImage()
+        width, height = qimage.width(), qimage.height()
+        ptr = qimage.bits()
+        ptr.setsize(qimage.byteCount())
+        arr = np.array(ptr).reshape(height, width, 4)
+        gray = arr[:, :, 0]  # uint8, 0-255, 黑底白字
+
+        processed = preprocess_letter(gray)
 
         current = self.current_letter_model
 
         if current == 'CNN' and self.cnn_letters_model is not None:
-            img_float = processed.astype(np.float32) / 255.0
-            img_norm = (img_float - 0.1307) / 0.3081
+            # CNN 训练时使用 Normalize((0.1307,), (0.3081,))
+            img_norm = (processed - 0.1307) / 0.3081
             img_tensor = torch.from_numpy(img_norm).unsqueeze(0).unsqueeze(0).to(self.device)
             with torch.no_grad():
                 logits = self.cnn_letters_model(img_tensor)
@@ -507,8 +513,9 @@ class MainWindow(QMainWindow):
             self.letter_result_label.setText("识别结果: CNN字母模型未加载")
             return
         elif current == 'BP' and self.bp_letters_model is not None:
-            img_float = processed.astype(np.float32) / 255.0
-            img_flat = img_float.flatten()
+            # BP 训练时使用 Normalize((0.5,), (0.5,)) → 映射到 [-1, 1]
+            img_norm = (processed - 0.5) / 0.5
+            img_flat = img_norm.flatten()
             processed_tensor = torch.from_numpy(img_flat).unsqueeze(0).float().to(self.device)
             with torch.no_grad():
                 logits = self.bp_letters_model(processed_tensor)

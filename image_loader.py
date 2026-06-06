@@ -140,10 +140,54 @@ def preprocess_single(img):
     # 5. 放入 28x28
     canvas = center_28x28(resized)
 
-    # 6. 质心居中（推荐）
+    # 6. 质心居中
     canvas = center_by_mass(canvas)
 
     return canvas
+
+
+def preprocess_letter(img):
+    """
+    字母识别专用预处理 —— 保留灰度信息，不做二值化。
+
+    与 preprocess_single 的关键区别：
+      - 不二值化 → 保留抗锯齿灰度过渡
+      - 其余步骤一致：裁剪 → 等比缩放 → 居中
+
+    输入：numpy / PIL（黑底白字）
+    输出：28×28 float32，范围 [0, 1]
+    """
+    img = to_uint8(img)
+
+    # 用非零像素定位内容区域
+    coords = cv2.findNonZero(img)
+    if coords is None:
+        return np.zeros((28, 28), dtype=np.float32)
+
+    x, y, w, h = cv2.boundingRect(coords)
+    pad_x = max(1, int(w * 0.15))
+    pad_y = max(1, int(h * 0.15))
+    x1 = max(0, x - pad_x)
+    y1 = max(0, y - pad_y)
+    x2 = min(img.shape[1], x + w + pad_x)
+    y2 = min(img.shape[0], y + h + pad_y)
+    cropped = img[y1:y2, x1:x2]
+
+    # 等比缩放到 20×20 以内
+    h_c, w_c = cropped.shape
+    scale = 20.0 / max(h_c, w_c)
+    new_h = max(1, int(h_c * scale))
+    new_w = max(1, int(w_c * scale))
+    resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # 居中放入 28×28 画布
+    canvas = np.zeros((28, 28), dtype=np.float32)
+    y_off = (28 - new_h) // 2
+    x_off = (28 - new_w) // 2
+    canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized.astype(np.float32) / 255.0
+
+    return canvas
+
 
 # ============================================================
 # 批量数据加载与数据集划分
@@ -204,7 +248,7 @@ def load_images(data_dir, target_size=28, verbose=True):
                 fpath = os.path.join(cls_dir, fname)
                 try:
                     img = Image.open(fpath)
-                    processed, _ = preprocess_single(img, target_size=target_size)
+                    processed = preprocess_single(img)
                     images.append(processed)
                     labels.append(cls_idx)
                 except Exception as e:
@@ -320,9 +364,9 @@ def load_mnist(data_dir, target_size=28):
     test_processed = np.zeros_like(test_images)
 
     for i in range(len(train_images)):
-        _, train_processed[i] = preprocess_single(train_images[i], target_size=target_size)
+        train_processed[i] = preprocess_single(train_images[i])
     for i in range(len(test_images)):
-        _, test_processed[i] = preprocess_single(test_images[i], target_size=target_size)
+        test_processed[i] = preprocess_single(test_images[i])
 
     return (train_processed, train_labels), (test_processed, test_labels)
 
