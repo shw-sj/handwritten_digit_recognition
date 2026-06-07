@@ -15,20 +15,18 @@ from PIL import Image
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QTabWidget, QSlider, QFileDialog,
-    QGroupBox, QGridLayout, QScrollArea
+    QGridLayout
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QPainter, QPen, QPixmap, QColor, QImage
-import matplotlib.pyplot as plt
+from PyQt5.QtGui import QPainter, QPen, QPixmap, QColor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib
 from matplotlib import rcParams
 # 导入模型及工具
 import torch
 from bp_network import BPNetwork
 from cnn_model_mnist import DeepCNN
-from image_loader import preprocess_single, preprocess_letter
+from image_process import preprocess_single, preprocess_letter
 from voice_process import audio_to_mfcc_matrix, audio_to_feature_tensor, VOICE_INPUT_SIZE
 
 try:

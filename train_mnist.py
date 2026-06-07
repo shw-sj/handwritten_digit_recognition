@@ -3,16 +3,20 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from torchvision import datasets,transforms
 from bp_network import BPNetwork
 from torch.utils.data import DataLoader
-from image_loader import load_torchvision_data
 from metrics import evaluate_classification
 
 batch_size=64
 
-digits = load_torchvision_data('mnist')
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
 
-train_dataset, test_dataset = digits['train_data'], digits['test_data']
+train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
 # 设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

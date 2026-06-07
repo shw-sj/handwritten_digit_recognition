@@ -5,15 +5,10 @@ import torch.optim as optim
 from bp_network import BPNetwork
 from voice_dataset import get_voice_loader
 
-
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
-)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 数据
-train_loader = get_voice_loader(
-    "./data/voice_digits"
-)
+train_loader = get_voice_loader("./data/voice_digits")
 
 # 输入大小
 input_size = 40 * 32
