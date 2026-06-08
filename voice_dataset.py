@@ -3,7 +3,7 @@ import librosa
 import numpy as np
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 
 
 class VoiceDigitDataset(Dataset):
@@ -70,11 +70,7 @@ class VoiceDigitDataset(Dataset):
         )
 
         # 标准化
-        mfcc = (
-                       mfcc - np.mean(mfcc)
-               ) / (
-                       np.std(mfcc) + 1e-8
-               )
+        mfcc = (mfcc - np.mean(mfcc)) / (np.std(mfcc) + 1e-8)
 
         # 固定帧数
         mfcc = mfcc[:, :32]
@@ -96,14 +92,30 @@ class VoiceDigitDataset(Dataset):
         )
 
 
-def get_voice_loader(data_dir, batch_size=32):
-
+def get_voice_loader(data_dir, batch_size=32, test_split=0.2):
+    # 1. 加载完整数据集
     dataset = VoiceDigitDataset(data_dir)
 
-    loader = DataLoader(
-        dataset,
+    # 2. 计算训练集、测试集长度
+    total_size = len(dataset)
+    test_size = int(total_size * test_split)
+    train_size = total_size - test_size
+
+    # 3. 随机划分成 训练集 + 测试集
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+
+    # 4. 分别创建 DataLoader
+    # 训练集：打乱
+    train_loader = DataLoader(
+        train_dataset,
         batch_size=batch_size,
         shuffle=True
     )
+    # 测试集：不打乱
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False
+    )
 
-    return loader
+    return train_loader, test_loader

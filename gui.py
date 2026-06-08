@@ -232,7 +232,7 @@ class MainWindow(QMainWindow):
 
         # ---------- BP 语音数字模型 ----------
         self.bp_voice_digits_model = None
-        bp_voice_path = os.path.join("weights", "voice_digits_bp.pth")
+        bp_voice_path = os.path.join("weights", "bp_voice_digits.pth")
         if os.path.exists(bp_voice_path):
             self.bp_voice_digits_model = BPNetwork(
                 input_size=VOICE_INPUT_SIZE, output_size=10
