@@ -9,11 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
 import os
-import sys
 
-if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')
 
 
 class DeepCNN(nn.Module):
@@ -71,64 +67,12 @@ class DeepCNN(nn.Module):
         return x
 
 
-# 保留原有模型定义，确保向后兼容
-class LeNet5(nn.Module):
-    """LeNet-5 变体，适用于 28x28 灰度图像输入"""
-    def __init__(self, num_classes=10):
-        super(LeNet5, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, kernel_size=5, padding=2)
-        self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(6, 16, kernel_size=5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, num_classes)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
-
-
-class SimpleCNN(nn.Module):
-    """简单 2 层卷积网络"""
-    def __init__(self, num_classes=10):
-        super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.fc1 = nn.Linear(64 * 7 * 7, 128)
-        self.fc2 = nn.Linear(128, num_classes)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 64 * 7 * 7)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
-
-
 # ============================================================
 # 训练脚本 (模仿 train_mnist.py 结构)
 # ============================================================
 
 if __name__ == "__main__":
     import numpy as np
-    import json
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    from sklearn.metrics import (
-        accuracy_score, precision_score, recall_score, f1_score,
-        confusion_matrix, classification_report
-    )
-
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
-    plt.rcParams['axes.unicode_minus'] = False
 
     BATCH_SIZE = 64
     EPOCHS = 25
@@ -164,8 +108,7 @@ if __name__ == "__main__":
     )
 
     from torch.utils.data import Subset
-    full_train_test = datasets.MNIST('./data', train=True, download=False,
-                                     transform=transform_test)
+    full_train_test = datasets.MNIST('./data', train=True, download=False,transform=transform_test)
     train_dataset = Subset(full_train, train_indices.indices)
     val_dataset = Subset(full_train_test, val_indices.indices)
 
@@ -265,152 +208,22 @@ if __name__ == "__main__":
     digit_classes = [str(i) for i in range(10)]
 
     # ---- 创建输出目录 ----
-    output_dir = os.path.join('data_2', 'mnist')
+    output_dir = os.path.join('data_mnist', 'CNN')
     os.makedirs(output_dir, exist_ok=True)
 
     # ================================================================
     # 1. 损失曲线 & 准确率曲线
     # ================================================================
-    epochs_range = range(1, EPOCHS + 1)
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    from metrics import draw_trainloss, draw_cm, draw_per_class_metric
 
-    ax1.plot(epochs_range, history['train_loss'], 'b-', linewidth=1.5, label='训练 Loss')
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
-    ax1.set_title('训练损失曲线')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-
-    ax2.plot(epochs_range, history['train_acc'], 'b-', linewidth=1.5, label='训练准确率')
-    ax2.plot(epochs_range, history['val_acc'], 'r-', linewidth=1.5, label='验证准确率')
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Accuracy (%)')
-    ax2.set_title('训练 & 验证准确率曲线')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    loss_curve_path = os.path.join(output_dir, 'loss_curve.png')
-    fig.savefig(loss_curve_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    print(f"[保存] 损失曲线 → {loss_curve_path}")
+    draw_trainloss(EPOCHS, history, output_dir)
 
     # ================================================================
     # 2. 混淆矩阵热力图
     # ================================================================
-    cm = confusion_matrix(all_labels, all_preds)
-    cm_normalized = cm.astype('float') / cm.sum(axis=1, keepdims=True)
-    cm_normalized = np.nan_to_num(cm_normalized)
-
-    fig, ax = plt.subplots(figsize=(12, 10))
-    im = ax.imshow(cm_normalized, cmap='YlOrRd', aspect='auto')
-
-    ax.set_xticks(range(10))
-    ax.set_yticks(range(10))
-    ax.set_xticklabels(digit_classes, fontsize=12)
-    ax.set_yticklabels(digit_classes, fontsize=12)
-    ax.set_xlabel('预测标签')
-    ax.set_ylabel('真实标签')
-    ax.set_title('CNN 数字识别 — 混淆矩阵 (归一化)')
-
-    for i in range(10):
-        for j in range(10):
-            val = cm_normalized[i, j]
-            if val > 0.03:
-                color = 'white' if val > 0.5 else 'black'
-                ax.text(j, i, f'{val:.3f}', ha='center', va='center',
-                        fontsize=10, color=color)
-
-    cbar = plt.colorbar(im, ax=ax, shrink=0.8)
-    cbar.set_label('比例')
-    plt.tight_layout()
-    cm_path = os.path.join(output_dir, 'confusion_matrix.png')
-    fig.savefig(cm_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    print(f"[保存] 混淆矩阵 → {cm_path}")
+    draw_cm(all_labels, all_preds, digit_classes, output_dir, task="digits")
 
     # ================================================================
     # 3. 每类 Precision / Recall / F1 + 总体指标
     # ================================================================
-    per_class_precision = precision_score(all_labels, all_preds, average=None)
-    per_class_recall = recall_score(all_labels, all_preds, average=None)
-    per_class_f1 = f1_score(all_labels, all_preds, average=None)
-    overall_accuracy = accuracy_score(all_labels, all_preds)
-    macro_precision = precision_score(all_labels, all_preds, average='macro')
-    macro_recall = recall_score(all_labels, all_preds, average='macro')
-    macro_f1 = f1_score(all_labels, all_preds, average='macro')
-
-    x = np.arange(10)
-    width = 0.25
-
-    fig, ax = plt.subplots(figsize=(14, 7))
-    bars1 = ax.bar(x - width, per_class_precision, width, label='Precision', color='#2ecc71')
-    bars2 = ax.bar(x, per_class_recall, width, label='Recall', color='#3498db')
-    bars3 = ax.bar(x + width, per_class_f1, width, label='F1 Score', color='#e74c3c')
-
-    ax.set_xlabel('数字类别')
-    ax.set_ylabel('分数')
-    ax.set_title('每类分类指标 (Precision / Recall / F1)')
-    ax.set_xticks(x)
-    ax.set_xticklabels(digit_classes, fontsize=12)
-    ax.legend(loc='lower right')
-    ax.set_ylim(0, 1.05)
-    ax.grid(True, axis='y', alpha=0.3)
-
-    summary_text = (f'Overall Accuracy: {overall_accuracy:.4f}\n'
-                    f'Macro Precision:  {macro_precision:.4f}\n'
-                    f'Macro Recall:     {macro_recall:.4f}\n'
-                    f'Macro F1:         {macro_f1:.4f}')
-    ax.text(0.98, 0.95, summary_text, transform=ax.transAxes,
-            fontsize=11, verticalalignment='top', horizontalalignment='right',
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-
-    plt.tight_layout()
-    metrics_path = os.path.join(output_dir, 'per_class_metrics.png')
-    fig.savefig(metrics_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    print(f"[保存] 每类指标图 → {metrics_path}")
-
-    # ================================================================
-    # 4. 保存数据文件
-    # ================================================================
-    np.savez(
-        os.path.join(output_dir, 'training_history.npz'),
-        train_loss=np.array(history['train_loss']),
-        train_acc=np.array(history['train_acc']),
-        val_acc=np.array(history['val_acc'])
-    )
-    np.save(os.path.join(output_dir, 'confusion_matrix.npy'), cm)
-
-    per_class_metrics = {}
-    for i, cls in enumerate(digit_classes):
-        per_class_metrics[cls] = {
-            'precision': float(per_class_precision[i]),
-            'recall': float(per_class_recall[i]),
-            'f1': float(per_class_f1[i])
-        }
-    metrics_json = {
-        'overall_accuracy': float(overall_accuracy),
-        'macro_precision': float(macro_precision),
-        'macro_recall': float(macro_recall),
-        'macro_f1': float(macro_f1),
-        'per_class': per_class_metrics
-    }
-    with open(os.path.join(output_dir, 'metrics_summary.json'), 'w', encoding='utf-8') as f:
-        json.dump(metrics_json, f, indent=2, ensure_ascii=False)
-
-    print(f"\n{'='*60}")
-    print(f"测试集评估结果")
-    print(f"{'='*60}")
-    print(f"Overall Accuracy : {overall_accuracy:.4f} ({overall_accuracy*100:.2f}%)")
-    print(f"Macro Precision  : {macro_precision:.4f}")
-    print(f"Macro Recall     : {macro_recall:.4f}")
-    print(f"Macro F1 Score   : {macro_f1:.4f}")
-    print(f"\n模型已保存至: {best_model_path}")
-    print(f"所有指标/图像已保存至: {output_dir}/")
-    print(f"  - loss_curve.png         训练损失 & 准确率曲线")
-    print(f"  - confusion_matrix.png   归一化混淆矩阵热力图")
-    print(f"  - per_class_metrics.png  每类 Precision/Recall/F1")
-    print(f"  - training_history.npz   训练历史数据")
-    print(f"  - confusion_matrix.npy   混淆矩阵原始数据")
-    print(f"  - metrics_summary.json   指标汇总 JSON")
+    draw_per_class_metric(all_labels, all_preds, digit_classes, output_dir, task="digits")

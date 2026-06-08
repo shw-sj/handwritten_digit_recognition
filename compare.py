@@ -105,14 +105,14 @@ def main():
     mnist_cnn.load_state_dict(torch.load("./weights/cnn_mnist.pth", map_location=device))
 
     mnist_bp = BPNetwork(input_size=784, output_size=10, task="digits").to(device)
-    mnist_bp.load_state_dict(torch.load("./weights/mnist_bp.pth", map_location=device))
+    mnist_bp.load_state_dict(torch.load("./weights/bp_mnist.pth", map_location=device))
 
     # 字母模型
     letters_cnn = DeepCNN_Letters().to(device)
     letters_cnn.load_state_dict(torch.load("./weights/cnn_letters.pth", map_location=device))
 
     letters_bp = BPNetwork(input_size=784, output_size=26, task="letters").to(device)
-    letters_bp.load_state_dict(torch.load("./weights/letters_bp.pth", map_location=device))
+    letters_bp.load_state_dict(torch.load("./weights/bp_letters.pth", map_location=device))
 
     # 评估模型
     print("\n=== 开始评估 ===")

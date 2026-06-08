@@ -10,6 +10,8 @@
 
 import sys
 import os
+
+import cv2
 import numpy as np
 from PIL import Image
 from PyQt5.QtWidgets import (
@@ -208,7 +210,7 @@ class MainWindow(QMainWindow):
 
         # ---------- BP 数字模型 ----------
         self.bp_digits_model = None
-        bp_digits_path = os.path.join("weights", "mnist_bp.pth")
+        bp_digits_path = os.path.join("weights", "bp_mnist.pth")
         if os.path.exists(bp_digits_path):
             self.bp_digits_model = BPNetwork(input_size=784,output_size=10).to(self.device)
             self.bp_digits_model.load_state_dict(torch.load(bp_digits_path, map_location=self.device))
@@ -219,7 +221,7 @@ class MainWindow(QMainWindow):
 
         # ---------- BP 字母模型 ----------
         self.bp_letters_model = None
-        bp_letters_path = os.path.join("weights", "letters_bp.pth")
+        bp_letters_path = os.path.join("weights", "bp_letters.pth")
         if os.path.exists(bp_letters_path):
             self.bp_letters_model = BPNetwork(input_size=784, output_size=26, task="letters").to(self.device)
             self.bp_letters_model.load_state_dict(torch.load(bp_letters_path, map_location=self.device))
@@ -494,7 +496,6 @@ class MainWindow(QMainWindow):
         gray = arr[:, :, 0]  # uint8, 0-255, 黑底白字
 
         processed = preprocess_letter(gray)
-
         current = self.current_letter_model
 
         if current == 'CNN' and self.cnn_letters_model is not None:

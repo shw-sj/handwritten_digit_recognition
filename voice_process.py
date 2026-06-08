@@ -50,6 +50,6 @@ def audio_to_feature_tensor(audio, sr=VOICE_SAMPLE_RATE, device=None):
 
 
 def extract_feature(file_path, device=None):
-    """从 wav 文件提取特征（test.py / 命令行用）。"""
+    """从 wav 文件提取特征。"""
     audio, sr = librosa.load(file_path, sr=VOICE_SAMPLE_RATE)
     return audio_to_feature_tensor(audio, sr, device)
