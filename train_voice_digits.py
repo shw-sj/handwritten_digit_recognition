@@ -77,12 +77,13 @@ def train(model, train_loader, criterion, optimizer, epochs=10):
 
         val_acc = 100 * val_correct / val_total
 
-        history['train_loss'].append(total_loss)
+        avg_loss = total_loss / len(train_loader)
+        history['train_loss'].append(avg_loss)
         history['train_acc'].append(train_acc)
         history['val_acc'].append(val_acc)
 
         print(f"Epoch [{epoch + 1:d}/{EPOCHS}]  "
-              f"Loss: {total_loss:.4f}  "
+              f"Loss: {avg_loss:.4f}  "
               f"Train Acc: {train_acc:.2f}%  "
               f"Val Acc: {val_acc:.2f}%")
 

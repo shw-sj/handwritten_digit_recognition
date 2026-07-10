@@ -17,7 +17,7 @@ from PIL import Image
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QTabWidget, QSlider, QFileDialog,
-    QGridLayout
+    QGridLayout, QProgressBar
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QPainter, QPen, QPixmap, QColor
@@ -108,6 +108,97 @@ class ConfidenceBarCanvas(FigureCanvas):
         self.fig.tight_layout()
         self.draw()
 
+    def update_bars_topk(self, probabilities, labels, top_k=8):
+        """只显示 Top-K 概率，横向柱状图，适合类别较多时使用"""
+        self.axes.clear()
+
+        # 按概率降序取 top-k
+        sorted_idx = np.argsort(probabilities)[::-1][:top_k]
+        top_probs = probabilities[sorted_idx]
+        top_labels = [labels[i] for i in sorted_idx]
+
+        # 横向柱状图（倒序让最高概率在最上面）
+        y = np.arange(len(top_probs))
+        colors = ['#e74c3c' if i == 0 else '#5dade2' for i in range(len(top_probs))]
+        self.axes.barh(y[::-1], top_probs[::-1], color=colors[::-1],
+                       edgecolor='white', linewidth=0.5)
+
+        # 在条形右侧标注概率值
+        for i, (prob, label) in enumerate(zip(top_probs[::-1], top_labels[::-1])):
+            self.axes.text(prob + 0.02, i, f'{label}  {prob:.1%}',
+                           va='center', fontsize=11, fontweight='bold')
+
+        self.axes.set_yticks([])
+        self.axes.set_xlim([0, 1.15])
+        self.axes.set_xlabel("置信度")
+        self.axes.set_title(f"Top-{top_k} 分类概率")
+        self.axes.spines['top'].set_visible(False)
+        self.axes.spines['right'].set_visible(False)
+        self.fig.tight_layout()
+        self.draw()
+
+# ---------- 预测排行列表 ----------
+class PredictionListWidget(QWidget):
+    """用 Qt 原生控件展示 Top-K 预测，带进度条，干净直观"""
+
+    def __init__(self, parent=None, top_k=6):
+        super().__init__(parent)
+        self.top_k = top_k
+        self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(3)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.rows = []
+
+    def update_predictions(self, probabilities, labels):
+        # 清除旧行
+        for row in self.rows:
+            self.layout.removeWidget(row)
+            row.deleteLater()
+        self.rows.clear()
+
+        # 排序取 Top-K
+        sorted_idx = np.argsort(probabilities)[::-1][:self.top_k]
+
+        for rank, idx in enumerate(sorted_idx):
+            prob = probabilities[idx]
+            label = labels[idx]
+
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(4, 1, 4, 1)
+            row_layout.setSpacing(6)
+
+            # 排名 + 标签
+            lbl = QLabel(f"  {rank+1}. {label}")
+            lbl.setFixedWidth(70)
+            lbl.setStyleSheet("font-size: 18px; font-weight: bold;")
+            row_layout.addWidget(lbl)
+
+            # 概率进度条
+            bar = QProgressBar()
+            bar.setRange(0, 1000)
+            bar.setValue(int(prob * 1000))
+            bar.setTextVisible(False)
+            bar.setFixedHeight(28)
+            color = "#e74c3c" if rank == 0 else "#5dade2"
+            bar.setStyleSheet(
+                f"QProgressBar {{ border: 1px solid #ddd; border-radius: 4px; background: #f0f0f0; }}"
+                f"QProgressBar::chunk {{ background: {color}; border-radius: 3px; }}"
+            )
+            row_layout.addWidget(bar, 1)
+
+            # 百分比
+            pct = QLabel(f"{prob:.1%}")
+            pct.setFixedWidth(55)
+            pct.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            pct.setStyleSheet("font-size: 15px; color: #333;")
+            row_layout.addWidget(pct)
+
+            self.layout.addWidget(row)
+            self.rows.append(row)
+
+        self.layout.addStretch()
+
 # ---------- 手写画板控件 ----------
 class HandwritingWidget(QWidget):
     def __init__(self, parent=None, pen_size=12):
@@ -183,7 +274,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("手写识别系统（CNN + BP）")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1400, 950)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -292,13 +383,13 @@ class MainWindow(QMainWindow):
     def setup_digits_tab(self):
         layout = QGridLayout(self.digits_tab)
 
-        self.digit_canvas = HandwritingWidget(pen_size=12)
+        self.digit_canvas = HandwritingWidget(pen_size=20)
         layout.addWidget(self.digit_canvas, 0, 0, 2, 1)
 
         brush_layout = QVBoxLayout()
         self.digit_brush_slider = QSlider(Qt.Horizontal)
-        self.digit_brush_slider.setRange(2, 30)
-        self.digit_brush_slider.setValue(12)
+        self.digit_brush_slider.setRange(2, 50)
+        self.digit_brush_slider.setValue(20)
         self.digit_brush_slider.valueChanged.connect(self.digit_canvas.set_pen_size)
         brush_layout.addWidget(QLabel("笔刷大小:"))
         brush_layout.addWidget(self.digit_brush_slider)
@@ -313,6 +404,17 @@ class MainWindow(QMainWindow):
         self.digit_result_label = QLabel("识别结果: 未识别")
         self.digit_result_label.setStyleSheet("font-size: 24px; font-weight: bold;")
         result_area.addWidget(self.digit_result_label)
+
+        # 预处理图像预览
+        preview_title = QLabel("模型输入图像 (28×28):")
+        preview_title.setStyleSheet("font-size: 14px; color: #555;")
+        result_area.addWidget(preview_title)
+        self.digit_preview_label = QLabel()
+        self.digit_preview_label.setFixedSize(280, 280)
+        self.digit_preview_label.setStyleSheet("border: 1px solid #ccc; background: white;")
+        self.digit_preview_label.setAlignment(Qt.AlignCenter)
+        self.digit_preview_label.setText("等待识别...")
+        result_area.addWidget(self.digit_preview_label)
 
         digit_models = []
         if self.cnn_model is not None:
@@ -346,13 +448,13 @@ class MainWindow(QMainWindow):
     def setup_letters_tab(self):
         layout = QGridLayout(self.letters_tab)
 
-        self.letter_canvas = HandwritingWidget(pen_size=12)
+        self.letter_canvas = HandwritingWidget(pen_size=20)
         layout.addWidget(self.letter_canvas, 0, 0, 2, 1)
 
         brush_layout = QVBoxLayout()
         self.letter_brush_slider = QSlider(Qt.Horizontal)
-        self.letter_brush_slider.setRange(2, 30)
-        self.letter_brush_slider.setValue(12)
+        self.letter_brush_slider.setRange(2, 50)
+        self.letter_brush_slider.setValue(20)
         self.letter_brush_slider.valueChanged.connect(self.letter_canvas.set_pen_size)
         brush_layout.addWidget(QLabel("笔刷大小:"))
         brush_layout.addWidget(self.letter_brush_slider)
@@ -368,6 +470,17 @@ class MainWindow(QMainWindow):
         self.letter_result_label.setStyleSheet("font-size: 24px; font-weight: bold;")
         result_area.addWidget(self.letter_result_label)
 
+        # 预处理图像预览
+        preview_title = QLabel("模型输入图像 (28×28):")
+        preview_title.setStyleSheet("font-size: 14px; color: #555;")
+        result_area.addWidget(preview_title)
+        self.letter_preview_label = QLabel()
+        self.letter_preview_label.setFixedSize(280, 280)
+        self.letter_preview_label.setStyleSheet("border: 1px solid #ccc; background: white;")
+        self.letter_preview_label.setAlignment(Qt.AlignCenter)
+        self.letter_preview_label.setText("等待识别...")
+        result_area.addWidget(self.letter_preview_label)
+
         letter_models = []
         if self.cnn_letters_model is not None:
             letter_models.append("CNN")
@@ -382,8 +495,8 @@ class MainWindow(QMainWindow):
         result_area.addLayout(model_row)
         layout.addLayout(result_area, 0, 1)
 
-        self.letter_confidence_canvas = ConfidenceBarCanvas(self, width=5, height=4)
-        layout.addWidget(self.letter_confidence_canvas, 1, 1)
+        self.letter_prediction_list = PredictionListWidget(self, top_k=6)
+        layout.addWidget(self.letter_prediction_list, 1, 1)
 
         btn_recognize = QPushButton("识别字母")
         btn_recognize.clicked.connect(self.recognize_letter)
@@ -449,11 +562,30 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(right_panel)
 
+    # ----------------- 工具方法 -----------------
+    def _numpy_to_qpixmap(self, arr, display_size=280):
+        """将 28×28 预处理图像转为 QPixmap 用于界面显示"""
+        if arr.max() <= 1.0:
+            arr = (arr * 255).astype(np.uint8)
+        else:
+            arr = arr.astype(np.uint8)
+        pil_img = Image.fromarray(arr).resize(
+            (display_size, display_size), Image.NEAREST
+        )
+        pil_img = pil_img.convert("RGB")
+        data = pil_img.tobytes("raw", "RGB")
+        from PyQt5.QtGui import QImage as QI
+        qi = QI(data, display_size, display_size, display_size * 3, QI.Format_RGB888)
+        return QPixmap.fromImage(qi)
+
     # ----------------- 识别方法 -----------------
     def recognize_digit(self):
         img_array = self.digit_canvas.get_image_array(target_size=(28,28))
         pil_img = Image.fromarray((img_array * 255).astype('uint8'))
         processed = preprocess_single(pil_img)
+
+        # 显示预处理后的图像
+        self.digit_preview_label.setPixmap(self._numpy_to_qpixmap(processed))
 
         current = self.current_model
 
@@ -496,6 +628,10 @@ class MainWindow(QMainWindow):
         gray = arr[:, :, 0]  # uint8, 0-255, 黑底白字
 
         processed = preprocess_letter(gray)
+
+        # 显示预处理后的图像
+        self.letter_preview_label.setPixmap(self._numpy_to_qpixmap(processed))
+
         current = self.current_letter_model
 
         if current == 'CNN' and self.cnn_letters_model is not None:
@@ -528,11 +664,11 @@ class MainWindow(QMainWindow):
         else:
             self.letter_result_label.setText("识别结果: 模型未加载")
             letter_labels = [chr(ord('A') + i) for i in range(26)]
-            self.letter_confidence_canvas.update_bars(np.zeros(26), letter_labels)
+            self.letter_prediction_list.update_predictions(np.zeros(26), letter_labels)
             return
 
         self.letter_result_label.setText(f"识别结果: {pred_char}")
-        self.letter_confidence_canvas.update_bars(probs, letter_labels)
+        self.letter_prediction_list.update_predictions(probs, letter_labels)
 
     # ----------------- 语音部分 -----------------
     def start_recording(self):
